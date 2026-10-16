@@ -1,0 +1,31 @@
+{
+  "models": [
+    {
+      "id": "bge-small-zh-v1.5",
+      "name": "BGE Small 中文 v1.5",
+      "description": "适合中文知识库检索的轻量起步配置；可用于 CPU 资源有限、低并发的本地部署，具体效果需用业务文档验证。",
+      "modelPath": "/models/bge-small-zh-v1.5",
+      "enabled": true,
+      "normalize": true,
+      "batchSize": 16
+    },
+    {
+      "id": "bge-base-zh-v1.5",
+      "name": "BGE Base 中文 v1.5",
+      "description": "适合将中文检索效果与资源消耗一起评估的场景；部署前请验证本机内存、时延及业务检索效果。",
+      "modelPath": "/models/bge-base-zh-v1.5",
+      "enabled": false,
+      "normalize": true,
+      "batchSize": 8
+    },
+    {
+      "id": "text2vec-base-chinese",
+      "name": "Text2Vec Base Chinese",
+      "description": "可作为中文语义匹配、相似文本检索的候选模型；请用实际业务语料确认适用性。",
+      "modelPath": "/models/text2vec-base-chinese",
+      "enabled": false,
+      "normalize": true,
+      "batchSize": 8
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+name: icp-diag-ai
+
+x-service-security: &service-security
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+
+x-logging: &service-logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: "5"
+
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.4}
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: metor_ai
+      MYSQL_USER: ai_user
+      MYSQL_PASSWORD: ${AI_DB_PASSWORD:?set AI_DB_PASSWORD}
+      METOR_DATABASE: ${METOR_DATABASE:-}
+      METOR_DB_USER: ${METOR_DB_USER:-}
+      METOR_DB_PASSWORD: ${METOR_DB_PASSWORD:-}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --max-allowed-packet=64M
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init/20-metor-schema.sh:/docker-entrypoint-initdb.d/20-metor-schema.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD" --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *service-logging
+    networks: [backend]
+
+  ai-migrate:
+    image: ${AI_RUNTIME_IMAGE:-ai-runtime-service:0.1.0}
+    pull_policy: never
+    restart: no
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment: &ai-environment
+      TZ: ${TZ:-Asia/Shanghai}
+      AI_DB_URL: ${AI_DB_URL:?set AI_DB_URL; URL-encode reserved password characters}
+      AI_EMBEDDING_MODEL_PATH: /models/embedding
+      AI_DOCUMENT_PATH: /data/ai/documents
+      AI_CHROMA_PATH: /data/ai/chroma
+      AI_EMBEDDING_DEVICE: cpu
+      AI_EMBEDDING_NORMALIZE: "true"
+      AI_LOG_CONTENT_ENABLED: "false"
+      AI_SERVICE_PORT: "8090"
+    command: [alembic, upgrade, head]
+    <<: *service-security
+    tmpfs: [/tmp]
+    logging: *service-logging
+    networks: [backend]
+
+  ai-runtime:
+    image: ${AI_RUNTIME_IMAGE:-ai-runtime-service:0.1.0}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      ai-migrate:
+        condition: service_completed_successfully
+    environment: *ai-environment
+    ports:
+      - ${AI_RUNTIME_BIND_ADDRESS:-127.0.0.1}:${AI_RUNTIME_EXPOSED_PORT:-8090}:8090
+    volumes:
+      - ai-documents:/data/ai/documents
+      - ai-chroma:/data/ai/chroma
+      - ${AI_EMBEDDING_MODEL_HOST_PATH:-./models/embedding}:/models/embedding:ro
+    <<: *service-security
+    tmpfs: [/tmp]
+    stop_grace_period: 90s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/internal/health/ready', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    logging: *service-logging
+    networks: [backend]
+
+volumes:
+  mysql-data:
+  ai-documents:
+  ai-chroma:
+
+networks:
+  backend:
+    internal: false

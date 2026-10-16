@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.full-local.example
+__pycache__/
+*.pyc
+.pytest_cache/
+runtime/
+dist/
+images/
+*.tar
+*.tar.gz
+.DS_Store

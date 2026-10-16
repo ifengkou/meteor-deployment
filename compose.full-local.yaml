@@ -1,0 +1,48 @@
+# Local full-stack overlay; use scripts/local-stack.py to select all base files.
+name: icp-diag-local
+services:
+  ai-runtime:
+    environment:
+      AI_EMBEDDING_MODELS_CONFIG: /config/embedding-models.json
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    volumes: !override
+      - ai-documents:/data/ai/documents
+      - ai-chroma:/data/ai/chroma
+      - ${AI_EMBEDDING_MODEL_HOST_PATH:?set AI_EMBEDDING_MODEL_HOST_PATH}:/models/embedding:ro
+      - ${AI_EMBEDDING_MODELS_CONFIG_HOST_PATH:?set AI_EMBEDDING_MODELS_CONFIG_HOST_PATH}:/config/embedding-models.json:ro
+  metor:
+    environment:
+      METOR_PLATFORM_AI_RUNTIME_BASE_URL: http://ai-runtime:8090
+      METOR_PLATFORM_AI_RUNTIME_READ_TIMEOUT: 610s
+    platform: ${METOR_PLATFORM:-linux/arm64}
+  frontend:
+    image: ${FRONTEND_IMAGE:-metor-platform-frontend:p6-local}
+    platform: ${METOR_PLATFORM:-linux/arm64}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      metor:
+        condition: service_healthy
+    environment:
+      JAVA_UPSTREAM: metor:8080
+    ports:
+      - 127.0.0.1:${FRONTEND_EXPOSED_PORT:-18180}:8080
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+      - /etc/nginx/conf.d
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O - http://127.0.0.1:8080/healthz >/dev/null']
+      interval: 20s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    networks: [backend]

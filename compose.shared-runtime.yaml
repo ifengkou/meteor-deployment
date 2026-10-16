@@ -1,0 +1,24 @@
+# Optional shared host storage overlay, selected by WORKSPACE_RUNTIME_DIR.
+services:
+  mysql:
+    ports:
+      - "127.0.0.1:${MYSQL_EXPOSED_PORT:-13306}:3306"
+  ai-runtime:
+    environment:
+      AI_LOG_PATH: /logs/ai
+      TMPDIR: /work/ai
+    volumes: !override
+      - ${WORKSPACE_RUNTIME_DIR:?set WORKSPACE_RUNTIME_DIR}/data/ai/documents:/data/ai/documents
+      - ${WORKSPACE_RUNTIME_DIR}/data/ai/chroma:/data/ai/chroma
+      - ${WORKSPACE_RUNTIME_DIR}/logs/docker/ai:/logs/ai
+      - ${WORKSPACE_RUNTIME_DIR}/work/ai:/work/ai
+      - ${AI_EMBEDDING_MODEL_HOST_PATH}:/models/embedding:ro
+      - ${AI_EMBEDDING_MODELS_CONFIG_HOST_PATH}:/config/embedding-models.json:ro
+  metor:
+    environment:
+      LOG_PATH: /logs/metor
+      JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/work/metor
+    volumes: !override
+      - ${WORKSPACE_RUNTIME_DIR}/data/metor:/data/metor
+      - ${WORKSPACE_RUNTIME_DIR}/logs/docker/metor:/logs/metor
+      - ${WORKSPACE_RUNTIME_DIR}/work/metor:/work/metor

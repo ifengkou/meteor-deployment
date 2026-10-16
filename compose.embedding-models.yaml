@@ -1,0 +1,10 @@
+# Requires Compose supporting !override. Paths in the JSON catalog are container paths.
+services:
+  ai-runtime:
+    environment:
+      AI_EMBEDDING_MODELS_CONFIG: /config/embedding-models.json
+    volumes: !override
+      - ai-documents:/data/ai/documents
+      - ai-chroma:/data/ai/chroma
+      - ${AI_EMBEDDING_MODELS_HOST_PATH:?set AI_EMBEDDING_MODELS_HOST_PATH}:/models:ro
+      - ${AI_EMBEDDING_MODELS_CONFIG_HOST_PATH:?set AI_EMBEDDING_MODELS_CONFIG_HOST_PATH}:/config/embedding-models.json:ro
