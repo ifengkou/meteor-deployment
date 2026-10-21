@@ -7,6 +7,20 @@ services:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
     volumes: !override
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/identity
+        target: /run/icp-license/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/shared
+        target: /run/icp-license/shared
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/state/ai
+        target: /run/icp-license/state/ai
+        bind: {create_host_path: false}
       - ai-documents:/data/ai/documents
       - ai-chroma:/data/ai/chroma
       - ${AI_EMBEDDING_MODEL_HOST_PATH:?set AI_EMBEDDING_MODEL_HOST_PATH}:/models/embedding:ro

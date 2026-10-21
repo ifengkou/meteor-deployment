@@ -96,3 +96,35 @@ def test_amd64_build_does_not_load_or_run_images() -> None:
     assert "--load" not in script
     assert "docker load" not in script
     assert "docker run" not in script
+
+
+def test_license_mounts_survive_all_volume_overrides() -> None:
+    ai_paths = ["compose.ai.yaml", "compose.full-local.yaml", "compose.shared-runtime.yaml"]
+    for name in ai_paths:
+        text = read(DEPLOYMENT / name)
+        ai = text.split("  ai-runtime:", 1)[1].split("  metor:", 1)[0]
+        assert "target: /run/icp-license/identity" in ai
+        assert "target: /run/icp-license/shared" in ai
+        assert "target: /run/icp-license/state/ai" in ai
+        assert "target: /run/icp-license/state/metor" not in ai
+        assert "create_host_path: false" in ai
+        shared = ai.split("target: /run/icp-license/shared", 1)[1]
+        assert "read_only: true" in shared.split("- type: bind", 1)[0]
+    for name in ["compose.metor.yaml", "compose.shared-runtime.yaml"]:
+        metor = read(DEPLOYMENT / name).split("  metor:", 1)[1]
+        assert "target: /run/icp-license/state/metor" in metor
+        assert "target: /run/icp-license/state/ai" not in metor
+    overlay = read(DEPLOYMENT / "compose.license-host.yaml")
+    assert overlay.count("target: /run/icp-host/machine-id") == 2
+    assert "create_host_path: false" in overlay
+
+
+def test_numeric_runtime_users_and_separate_customer_build_metadata() -> None:
+    java = read(REPO_ROOT / "metor-service/Dockerfile")
+    python = read(REPO_ROOT / "ai-runtime-service/Dockerfile")
+    assert "--gid 21000 license-runtime" in java
+    assert "--uid 21001 --gid 21001 --groups license-runtime" in java
+    assert "--uid 21002 --gid 21002 --groups license-runtime" in python
+    assert "LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED" in python
+    assert "build_license_metadata.py" in python
+    assert "USER metor" in java and "USER ai-runtime" in python

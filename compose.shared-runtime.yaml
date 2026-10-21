@@ -8,6 +8,20 @@ services:
       AI_LOG_PATH: /logs/ai
       TMPDIR: /work/ai
     volumes: !override
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/identity
+        target: /run/icp-license/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/shared
+        target: /run/icp-license/shared
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/state/ai
+        target: /run/icp-license/state/ai
+        bind: {create_host_path: false}
       - ${WORKSPACE_RUNTIME_DIR:?set WORKSPACE_RUNTIME_DIR}/data/ai/documents:/data/ai/documents
       - ${WORKSPACE_RUNTIME_DIR}/data/ai/chroma:/data/ai/chroma
       - ${WORKSPACE_RUNTIME_DIR}/logs/docker/ai:/logs/ai
@@ -19,6 +33,20 @@ services:
       LOG_PATH: /logs/metor
       JAVA_TOOL_OPTIONS: -Djava.io.tmpdir=/work/metor
     volumes: !override
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/identity
+        target: /run/icp-license/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/shared
+        target: /run/icp-license/shared
+        read_only: false
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/state/metor
+        target: /run/icp-license/state/metor
+        bind: {create_host_path: false}
       - ${WORKSPACE_RUNTIME_DIR}/data/metor:/data/metor
       - ${WORKSPACE_RUNTIME_DIR}/logs/docker/metor:/logs/metor
       - ${WORKSPACE_RUNTIME_DIR}/work/metor:/work/metor

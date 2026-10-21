@@ -17,6 +17,8 @@ services:
         condition: service_healthy
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+      METOR_PLATFORM_LICENSE_ROOT: /run/icp-license
+      METOR_PLATFORM_LICENSE_MACHINE_ID: /run/icp-host/machine-id
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       SPRING_PROFILES_ACTIVE: docker
@@ -55,9 +57,24 @@ services:
       METOR_AEROSPACE_DECRYPTION_ENABLED: ${METOR_AEROSPACE_DECRYPTION_ENABLED:-false}
       METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES: ${METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES:-20}
       METOR_AEROSPACE_DECRYPTION_LIBRARY_PATH: /usr/local/lib/libEncryptAndDecrypt.so
+    group_add: ["21000"]
     ports:
       - ${METOR_BIND_ADDRESS:-127.0.0.1}:${APP_EXPOSED_PORT:-8080}:8080
     volumes:
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/identity
+        target: /run/icp-license/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/shared
+        target: /run/icp-license/shared
+        read_only: false
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/state/metor
+        target: /run/icp-license/state/metor
+        bind: {create_host_path: false}
       - metor-data:/data/metor
     read_only: true
     tmpfs: [/tmp]

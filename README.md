@@ -81,6 +81,35 @@ AI 本地源码运行与模型业务配置仍由 AI 工程文档维护，不在�
 
 ## 宿主依赖与验证
 
+### 离线授权初始化（第三阶段）
+
+在独立安装根目录显式初始化许可资料，不重建数据库凭据：
+
+```bash
+sudo python3 deployment/scripts/local-stack.py license-init --license-root /opt/icp-diag/runtime/license
+```
+
+该命令仅使用 Python 标准库，需要 root 设置数值所有者。Metor UID/GID 为
+`21001:21001`，AI 为 `21002:21002`，共同读取组为 `21000`。已有账号 ID 冲突或
+目录权限不符时明确失败，不递归修改无关数据。升级既有安装前，应在隔离环境核对
+原业务卷的数值所有者与新镜像的读写权限；初始化命令只管理许可目录，不迁移业务卷。
+
+首次生成安装 UUID、32 字节服务密钥及两端 HMAC 时间种子，最后发布完成标记。
+中断后保留同一身份和密钥续接；完成后重复执行只验证，时间种子或密钥丢失时拒绝
+补造。应用本身不会初始化这些文件。请保留整个许可目录，并设置
+`runtime/config/docker.env` 中的 `LICENSE_ROOT` 为该目录。
+
+Compose 保持身份只读、共享许可仅 Java 可写及两端状态隔离。入口仅在真实宿主
+machine-id 文件存在时选择 `compose.license-host.yaml`；可用 `LICENSE_MACHINE_ID_PATH`
+指定实际来源。缺少该文件不自动生成替代标识，合法无绑定许可无需机器标识。
+
+SDK 当前为 `0.3.0`，两个后端引入固定发行制品，构建资料分别见业务工程的
+`license-build/README.md`。客户镜像默认要求构建时提供我方公钥；普通运行环境变量
+不能切换发行模式或注入信任。商业授权异常不替代健康检查，也不令应用退出。
+
+本阶段只装配状态观察与时间保护，尚未接入管理 API、业务拦截或恢复应用，不作为
+完整客户授权版本发布。Linux AMD64 的实际 UID/GID、只读挂载及升级权限仍需实机验收。
+
 部署管理需要 Python 3.9+、Docker Engine、Compose 2.24.4+，备份恢复使用 `tar`、`gzip`。脚本只用 Python 标准库，不要求宿主安装 JDK、Node 或 Python 业务依赖。
 
 无需 Docker 的脚本安全测试：

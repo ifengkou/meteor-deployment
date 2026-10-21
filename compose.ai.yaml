@@ -59,6 +59,8 @@ services:
       AI_EMBEDDING_NORMALIZE: "true"
       AI_LOG_CONTENT_ENABLED: "false"
       AI_SERVICE_PORT: "8090"
+      AI_LICENSE_ROOT: /run/icp-license
+      AI_LICENSE_MACHINE_ID_FILE: /run/icp-host/machine-id
     command: [alembic, upgrade, head]
     <<: *service-security
     tmpfs: [/tmp]
@@ -73,9 +75,24 @@ services:
       ai-migrate:
         condition: service_completed_successfully
     environment: *ai-environment
+    group_add: ["21000"]
     ports:
       - ${AI_RUNTIME_BIND_ADDRESS:-127.0.0.1}:${AI_RUNTIME_EXPOSED_PORT:-8090}:8090
     volumes:
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/identity
+        target: /run/icp-license/identity
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/shared
+        target: /run/icp-license/shared
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${LICENSE_ROOT:-../runtime/license}/state/ai
+        target: /run/icp-license/state/ai
+        bind: {create_host_path: false}
       - ai-documents:/data/ai/documents
       - ai-chroma:/data/ai/chroma
       - ${AI_EMBEDDING_MODEL_HOST_PATH:-./models/embedding}:/models/embedding:ro

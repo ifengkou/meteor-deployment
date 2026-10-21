@@ -76,6 +76,9 @@ def compose(env_file, *args, **kwargs):
     files = [*FILES]
     if config.get("WORKSPACE_RUNTIME_DIR"):
         files.append("compose.shared-runtime.yaml")
+    host_identity = Path(config.get("LICENSE_MACHINE_ID_PATH", "/etc/machine-id"))
+    if host_identity.is_file():
+        files.append("compose.license-host.yaml")
     for name in files:
         command.extend(["-f", str(DEPLOYMENT / name)])
     return run(command + list(args), **kwargs)
@@ -167,6 +170,13 @@ def init(args):
         for key, value in values.items():
             target.write(f"{key}={shlex.quote(value)}\n")
     print(f"Protected configuration created: {args.env_file}")
+
+
+def license_init(args):
+    # Import only for this subcommand; no SDK, pip, machine-id or database required.
+    import license_init as installer
+    result = installer.initialize_license(args.license_root)
+    print(json.dumps(result))
 
 
 def validate_sql(sql, target):
@@ -553,12 +563,15 @@ def export_bundle(args):
     # Include only portable deployment inputs, never private envs, backups or host data.
     package_deployment = target / "deployment"
     package_deployment.mkdir()
-    for name in [*FILES, "compose.shared-runtime.yaml", ".env.full-local.example", "README.md"]:
+    for name in [*FILES, "compose.shared-runtime.yaml", "compose.license-host.yaml",
+                 ".env.full-local.example", "README.md"]:
         shutil.copy2(DEPLOYMENT / name, package_deployment / name)
     shutil.copytree(DEPLOYMENT / "mysql-init", package_deployment / "mysql-init")
     shutil.copytree(DEPLOYMENT / "migrations", package_deployment / "migrations")
     (package_deployment / "scripts").mkdir()
     shutil.copy2(Path(__file__), package_deployment / "scripts/local-stack.py")
+    shutil.copy2(DEPLOYMENT / "scripts/license_init.py",
+                 package_deployment / "scripts/license_init.py")
     for name in ("import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
         shutil.copy2(DEPLOYMENT / "scripts" / name, package_deployment / "scripts" / name)
     catalog_path = package_deployment / "config/embedding-models.example.json"
@@ -650,6 +663,9 @@ def main():
     parser.add_argument("--project", choices=ALLOWED_PROJECTS, default=PROJECT)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV)
     commands = parser.add_subparsers(dest="command", required=True)
+    license_create = commands.add_parser("license-init",
+        help="Initialize offline licensing identity and clocks without changing database credentials")
+    license_create.add_argument("--license-root", type=Path, default=RUNTIME_ROOT / "license")
     create = commands.add_parser("init")
     create.add_argument("--model-path", type=Path, required=True)
     create.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
@@ -713,6 +729,7 @@ def main():
                 "mysql": mysql_cli,
                 "mode": switch_mode,
                 "init": init,
+                "license-init": license_init,
                 "restore-metor": restore_metor,
                 "backup": backup_stack,
                 "restore-stack": restore_stack,

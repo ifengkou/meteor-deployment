@@ -1,0 +1,16 @@
+# Optional real-host identity only; wrapper selects this when the source is a file.
+services:
+  ai-runtime:
+    volumes:
+      - type: bind
+        source: ${LICENSE_MACHINE_ID_PATH:-/etc/machine-id}
+        target: /run/icp-host/machine-id
+        read_only: true
+        bind: {create_host_path: false}
+  metor:
+    volumes:
+      - type: bind
+        source: ${LICENSE_MACHINE_ID_PATH:-/etc/machine-id}
+        target: /run/icp-host/machine-id
+        read_only: true
+        bind: {create_host_path: false}
