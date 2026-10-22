@@ -13,6 +13,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+
+import license_backup
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -308,7 +310,12 @@ def backup_stack(args):
     config = read_env(args.env_file)
     if config.get("WORKSPACE_RUNTIME_DIR"):
         ensure_native_services_stopped()
+    root = license_backup.license_root(config, DEPLOYMENT)
+    license_backup.preflight(root)
+    machine_fingerprint = license_backup.host_fingerprint(config, DEPLOYMENT)
     target = args.backup.resolve()
+    if target == root.resolve() or root.resolve() in target.parents:
+        raise ValueError("backup destination must be outside LICENSE_ROOT")
     target.mkdir(parents=True, exist_ok=False, mode=0o700)
     running = compose(
         args.env_file, "ps", "--status", "running", "--services", capture_output=True, text=True
@@ -317,6 +324,9 @@ def backup_stack(args):
     try:
         if writers:
             compose(args.env_file, "stop", *writers)
+        license_metadata = license_backup.backup(
+            root, target / license_backup.ARCHIVE, machine_fingerprint
+        )
         for database in ("metor_service", "metor_ai"):
             with (target / f"{database}.sql").open("wb") as output:
                 compose(
@@ -378,6 +388,7 @@ def backup_stack(args):
                     "createdAt": datetime.now(timezone.utc).isoformat(),
                     "databases": ["metor_service", "metor_ai"],
                     "includesModelWeights": False,
+                    "licenseState": license_metadata,
                 },
                 indent=2,
             )
@@ -457,6 +468,40 @@ def restore_stack(args):
         or set(manifest.get("databases", [])) != {"metor_service", "metor_ai"}
     ):
         raise ValueError("unsupported full-stack backup manifest")
+    validate_sql((backup / "metor_ai.sql").read_bytes(), "metor_ai")
+    validate_sql((backup / "metor_service.sql").read_bytes(), "metor_service")
+    validate_ai_archive(backup / "ai-data.tar.gz")
+    config = read_env(args.env_file)
+    root = license_backup.license_root(config, DEPLOYMENT)
+    metadata = manifest.get("licenseState")
+    licensing_archive = backup / license_backup.ARCHIVE
+    if metadata is not None:
+        if license_backup.ARCHIVE not in covered:
+            raise ValueError("license archive is not covered by backup checksums")
+    elif licensing_archive.exists():
+        raise ValueError("license archive requires a licenseState manifest record")
+    stage = license_backup.prepare_restore(
+        root, licensing_archive if metadata is not None else None, metadata,
+        license_backup.host_fingerprint(config, DEPLOYMENT),
+    )
+    try:
+        if config.get("WORKSPACE_RUNTIME_DIR"):
+            ensure_native_services_stopped()
+        running = compose(
+            args.env_file, "ps", "--status", "running", "--services",
+            capture_output=True, text=True,
+        ).stdout.splitlines()
+        if any(name in running for name in ("frontend", "metor", "ai-runtime")):
+            raise ValueError("stop target frontend, metor and ai-runtime before full stack recovery")
+        # Publish original identity before any Compose run creates a license bind mount.
+        license_backup.publish_restore(root, stage)
+        _restore_stack_data(args, backup)
+    finally:
+        if stage is not None and stage.exists():
+            shutil.rmtree(stage)
+
+
+def _restore_stack_data(args, backup):
     sql = (backup / "metor_ai.sql").read_bytes()
     validate_sql(sql, "metor_ai")
     validate_sql((backup / "metor_service.sql").read_bytes(), "metor_service")
@@ -572,7 +617,7 @@ def export_bundle(args):
     shutil.copy2(Path(__file__), package_deployment / "scripts/local-stack.py")
     shutil.copy2(DEPLOYMENT / "scripts/license_init.py",
                  package_deployment / "scripts/license_init.py")
-    for name in ("import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
+    for name in ("license_backup.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
         shutil.copy2(DEPLOYMENT / "scripts" / name, package_deployment / "scripts" / name)
     catalog_path = package_deployment / "config/embedding-models.example.json"
     catalog_path.parent.mkdir(parents=True)
@@ -636,6 +681,43 @@ def mysql_cli(args):
     compose(args.env_file, "exec", "mysql", "sh", "-c", command)
 
 
+def license_recovery(args):
+    """Use the already installed SDK inside AI; the host needs only Python stdlib/Docker."""
+    command = ["exec", "-T", "ai-runtime", "python", "-m", "app.operations.license_recovery"]
+    command.append(args.recovery_action)
+    options = {"capture_output": True}
+    if args.recovery_action == "apply":
+        with args.file.open("rb") as source:
+            raw = source.read(65537)
+        if not 0 < len(raw) <= 65536:
+            raise ValueError("recovery file must be 1-65536 bytes")
+        command.extend(["--file", "-"])
+        options["input"] = raw
+    # The authenticated request is generated by the client in the target AI container.
+    # No service.key or ControlProof is transferred to the host or Metor.
+    try:
+        result = compose(args.env_file, *command, **options)
+    except subprocess.CalledProcessError as error:
+        if error.stdout:
+            print(error.stdout.decode("utf-8"), file=sys.stderr)
+        raise ValueError("AI recovery did not complete; retry the same operation/file if outcome is unknown") from error
+    if result.returncode:
+        if result.stdout:
+            print(result.stdout.decode("utf-8"), file=sys.stderr)
+        raise ValueError("AI recovery did not complete; for unknown outcome retry the same operation/file")
+    if args.recovery_action == "request":
+        data = json.loads(result.stdout)
+        if not isinstance(data, dict) or data.get("kind") != "clock-recovery-request":
+            raise ValueError("AI returned an invalid recovery request")
+        fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as target:
+            target.write(result.stdout)
+        print(f"AI recovery request saved: {args.output}")
+        print(data["recovery_code"])
+    else:
+        print(result.stdout.decode("utf-8"))
+
+
 def ensure_native_services_stopped():
     import socket
 
@@ -666,6 +748,12 @@ def main():
     license_create = commands.add_parser("license-init",
         help="Initialize offline licensing identity and clocks without changing database credentials")
     license_create.add_argument("--license-root", type=Path, default=RUNTIME_ROOT / "license")
+    recovery = commands.add_parser("license-recovery", help="AI online time recovery using its own API")
+    recovery_commands = recovery.add_subparsers(dest="recovery_action", required=True)
+    recovery_request = recovery_commands.add_parser("request")
+    recovery_request.add_argument("--output", type=Path, required=True)
+    recovery_apply = recovery_commands.add_parser("apply")
+    recovery_apply.add_argument("--file", type=Path, required=True)
     create = commands.add_parser("init")
     create.add_argument("--model-path", type=Path, required=True)
     create.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
@@ -730,13 +818,14 @@ def main():
                 "mode": switch_mode,
                 "init": init,
                 "license-init": license_init,
+                "license-recovery": license_recovery,
                 "restore-metor": restore_metor,
                 "backup": backup_stack,
                 "restore-stack": restore_stack,
                 "build": build,
                 "export": export_bundle,
             }[args.command](args)
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         print(f"Local stack operation failed: {error}", file=sys.stderr)
         return 1
     return 0

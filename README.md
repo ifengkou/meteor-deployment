@@ -133,3 +133,7 @@ python3 -m pytest deployment/tests/test_deployment_assets.py
 本次迁移不初始化 Git、不提交、不推送、不重建容器，唯一运行配置仍为原来的 `runtime/config/docker.env`。原 `deployment/.env.full-local` 已保留到工作区 `runtime/backups/deployment-migration-20261016/deployment.env.full-local`，权限 0600，不作为运行配置。用户已有的 Metor `.env.docker` 保留但不读取。
 
 提交部署仓库前检查忽略规则，不加入私有 env、运行数据、客户样本、镜像归档或数据库备份。模型清单示例和占位 env 模板可提交，真实密钥只保存在安装根目录的私有 runtime 中。
+
+### 时间异常恢复（Phase 6）
+
+使用 SDK 0.6.0 / issuer 0.3.0，Metor 与 AI 独立在线恢复。操作步骤、手抄申请及错误处理见 [中文恢复手册](docs/license-recovery.md)。AI 维护客户端已包含在镜像内，宿主无需安装授权 SDK。

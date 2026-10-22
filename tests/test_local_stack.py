@@ -14,6 +14,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
 spec = importlib.util.spec_from_file_location(
     "local_stack", Path(__file__).resolve().parents[1] / "scripts/local-stack.py"
 )
@@ -41,6 +43,45 @@ class LocalStackTests(unittest.TestCase):
             catalog=self.catalog,
             metor_env_file=None,
         )
+
+    def test_license_recovery_request_is_private_and_does_not_overwrite(self):
+        output = self.root / "request.json"
+        args = SimpleNamespace(env_file=self.env, recovery_action="request", output=output)
+        raw = json.dumps({"kind": "clock-recovery-request", "recovery_code": "RC1A-example"}).encode()
+        with patch.object(stack, "compose", return_value=SimpleNamespace(returncode=0, stdout=raw)) as call:
+            stack.license_recovery(args)
+            self.assertEqual(output.read_bytes(), raw)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            command = call.call_args.args
+            self.assertEqual(command[1:4], ("exec", "-T", "ai-runtime"))
+            self.assertIn("app.operations.license_recovery", command)
+            with self.assertRaises(FileExistsError):
+                stack.license_recovery(args)
+            self.assertEqual(output.read_bytes(), raw)
+
+    def test_license_recovery_apply_streams_exact_file_only_to_ai(self):
+        source = self.root / "recovery.json"
+        source.write_bytes(b'{"signed":"example"}')
+        args = SimpleNamespace(env_file=self.env, recovery_action="apply", file=source)
+        with patch.object(stack, "compose", return_value=SimpleNamespace(returncode=0, stdout=b"{}")) as call:
+            stack.license_recovery(args)
+            self.assertEqual(call.call_args.kwargs["input"], source.read_bytes())
+            self.assertEqual(call.call_args.args[-3:], ("apply", "--file", "-"))
+            self.assertNotIn("metor", call.call_args.args)
+        source.write_bytes(b"x" * 65537)
+        with patch.object(stack, "compose") as call:
+            with self.assertRaises(ValueError):
+                stack.license_recovery(args)
+            call.assert_not_called()
+
+    def test_license_recovery_unknown_outcome_does_not_write_request(self):
+        output = self.root / "request.json"
+        args = SimpleNamespace(env_file=self.env, recovery_action="request", output=output)
+        error = subprocess.CalledProcessError(2, ["recovery"], output=b'{"status":"OUTCOME_UNKNOWN"}')
+        with patch.object(stack, "compose", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "same operation/file"):
+                stack.license_recovery(args)
+        self.assertFalse(output.exists())
 
     def test_layout_preserves_source_and_portable_config_roots(self):
         source = self.root / "workspace"
@@ -110,7 +151,8 @@ class LocalStackTests(unittest.TestCase):
         with patch("builtins.print"):
             stack.init(self.args)
         args = argparse.Namespace(env_file=self.env, backup=self.root / "backup", keep_stopped=True)
-        with patch.object(stack, "compose") as compose:
+        with patch.object(stack, "license_backup") as licensing, patch.object(stack, "compose") as compose:
+            licensing.license_root.return_value = self.root / "license"
             compose.side_effect = [
                 SimpleNamespace(stdout="frontend\nmetor\nai-runtime\n"),
                 SimpleNamespace(),
@@ -269,6 +311,9 @@ class LocalStackTests(unittest.TestCase):
             stack.init(self.args)
         args = argparse.Namespace(env_file=self.env, backup=self.root / "backup")
         with (
+            patch.object(stack.license_backup, "host_fingerprint", return_value=None),
+            patch.object(stack.license_backup, "preflight"),
+            patch.object(stack.license_backup, "backup", return_value={}),
             patch.object(stack, "compose", return_value=SimpleNamespace(stdout="")),
             patch("builtins.print"),
         ):
@@ -288,6 +333,9 @@ class LocalStackTests(unittest.TestCase):
             output.write(f"WORKSPACE_RUNTIME_DIR={self.root}\n")
         args = argparse.Namespace(env_file=self.env, backup=self.root / "shared-backup")
         with (
+            patch.object(stack.license_backup, "host_fingerprint", return_value=None),
+            patch.object(stack.license_backup, "preflight"),
+            patch.object(stack.license_backup, "backup", return_value={}),
             patch.object(stack, "compose", return_value=SimpleNamespace(stdout="")),
             patch.object(stack, "ensure_native_services_stopped"),
             patch("builtins.print"),
@@ -386,6 +434,9 @@ class LocalStackTests(unittest.TestCase):
         )
         args = argparse.Namespace(env_file=self.env, backup=backup)
         with (
+            patch.object(stack.license_backup, "prepare_restore", return_value=None),
+            patch.object(stack.license_backup, "host_fingerprint", return_value=None),
+            patch.object(stack, "read_env", return_value={}),
             patch.object(stack, "mysql", return_value=b"0\n"),
             patch.object(stack, "compose", return_value=SimpleNamespace(stdout=b"")) as compose,
             patch.object(stack, "restore_metor"),

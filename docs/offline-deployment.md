@@ -39,3 +39,17 @@ python3 deployment/scripts/local-stack.py compose config --quiet
 AI 离线源码构建仍要求匹配架构和 Python 版本的完整 wheelhouse，使用 `build --service ai --offline`。Metor／前端的无网源码重建不在此命令支持范围；运行预制镜像与离线源码重建是两件事。
 
 历史独立部署工具已移入 `deployment/archive/standalone/`，不作为运行入口。
+
+## SDK 与依赖的离线边界
+
+客户只加载我方预制镜像：Java SDK 已打入 BootJar，Python SDK、cryptography、PyJWT 及其运行依赖已装入 AI 镜像。容器启动不执行 Maven、Gradle、pip 或 uv 安装；单个 Python SDK wheel 不等于自包含运行环境。
+
+我方准备 AI 离线构建依赖时，显式选择最终 Linux 架构（目标 Python 固定为 3.12），不能把制作机缓存当作依赖闭包：
+
+```bash
+TARGET_PLATFORM=linux/amd64 deployment/scripts/prepare-wheelhouse.sh
+# 也支持自定义输出目录；随后将完整目录交给该架构的构建任务。
+TARGET_PLATFORM=linux/arm64 deployment/scripts/prepare-wheelhouse.sh /absolute/build/wheelhouse
+```
+
+准备命令需要我方联网、uv 和可运行目标架构的 Docker 环境，按锁文件下载全部二进制依赖，保留本地 SDK wheel 相对路径；下载后在目标容器内用 `--no-index --no-cache-dir --ignore-installed --dry-run` 检查完整安装闭包，输出 `SHA256SUMS`。目标架构镜像不可执行、Python 版本不符、SDK 缺失或缺少兼容 wheel 时直接失败，不回退源码编译。制作期准备工具不会进入客户镜像运行流程。
