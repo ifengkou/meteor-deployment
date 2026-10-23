@@ -81,7 +81,7 @@ AI 本地源码运行与模型业务配置仍由 AI 工程文档维护，不在�
 
 ## 宿主依赖与验证
 
-### 离线授权初始化（第三阶段）
+### 离线授权初始化与当前能力
 
 在独立安装根目录显式初始化许可资料，不重建数据库凭据：
 
@@ -103,12 +103,11 @@ Compose 保持身份只读、共享许可仅 Java 可写及两端状态隔离。
 machine-id 文件存在时选择 `compose.license-host.yaml`；可用 `LICENSE_MACHINE_ID_PATH`
 指定实际来源。缺少该文件不自动生成替代标识，合法无绑定许可无需机器标识。
 
-SDK 当前为 `0.3.0`，两个后端引入固定发行制品，构建资料分别见业务工程的
-`license-build/README.md`。客户镜像默认要求构建时提供我方公钥；普通运行环境变量
+SDK 当前为 `0.6.0`，我方 issuer 为 `0.3.0`。两个后端引入固定发行制品，构建资料见
+[Metor 授权构建](../metor-service/license-build/README.md)和 [AI 授权构建](../ai-runtime-service/license-build/README.md)。客户镜像默认要求构建时提供我方公钥；普通运行环境变量
 不能切换发行模式或注入信任。商业授权异常不替代健康检查，也不令应用退出。
 
-本阶段只装配状态观察与时间保护，尚未接入管理 API、业务拦截或恢复应用，不作为
-完整客户授权版本发布。Linux AMD64 的实际 UID/GID、只读挂载及升级权限仍需实机验收。
+本地管理 API、关键请求/方法拦截与单服务在线时间恢复已实现。Phase 7 管理页面开发及自动检查完成，人工 UI 验收待确认；客户目标 Linux 的实际 UID/GID、只读挂载、升级及最终镜像仍在 Phase 8 验收，不将当前制品当作客户交付已验收。
 
 部署管理需要 Python 3.9+、Docker Engine、Compose 2.24.4+，备份恢复使用 `tar`、`gzip`。脚本只用 Python 标准库，不要求宿主安装 JDK、Node 或 Python 业务依赖。
 
@@ -137,3 +136,7 @@ python3 -m pytest deployment/tests/test_deployment_assets.py
 ### 时间异常恢复（Phase 6）
 
 使用 SDK 0.6.0 / issuer 0.3.0，Metor 与 AI 独立在线恢复。操作步骤、手抄申请及错误处理见 [中文恢复手册](docs/license-recovery.md)。AI 维护客户端已包含在镜像内，宿主无需安装授权 SDK。
+
+### 离线授权图解手册
+
+打开 [八主题可视化入口](docs/license-guide/index.html)，或查看[文件目录](docs/license-guide/README.md)。包含授权控制、防回拨与恢复、issuer/SDK/两服务接入、客户操作，以及包内清单、CAS、原子提交和备份。全部 HTML 可离线打开，无需启动业务服务；时间页交互仅为教学模型。

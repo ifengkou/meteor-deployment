@@ -1,0 +1,40 @@
+{
+  "baseline": "2026-10-23",
+  "sdk": "0.6.0",
+  "issuer": "0.3.0",
+  "pages": [
+    {
+      "file": "01-control.html",
+      "title": "授权控制机制"
+    },
+    {
+      "file": "02-clock-recovery.html",
+      "title": "防时间回拨与恢复"
+    },
+    {
+      "file": "03-issuer.html",
+      "title": "Issuer 签发流程"
+    },
+    {
+      "file": "04-sdk.html",
+      "title": "SDK 接入步骤"
+    },
+    {
+      "file": "05-metor.html",
+      "title": "Metor 集成与运行"
+    },
+    {
+      "file": "06-ai-runtime.html",
+      "title": "AI Runtime 集成与运行"
+    },
+    {
+      "file": "07-operations.html",
+      "title": "客户日常操作"
+    },
+    {
+      "file": "08-integrity-failures.html",
+      "title": "完整性与失败处理"
+    }
+  ],
+  "network_required": false
+}
