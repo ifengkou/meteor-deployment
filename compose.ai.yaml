@@ -60,7 +60,7 @@ services:
       AI_LOG_CONTENT_ENABLED: "false"
       AI_SERVICE_PORT: "8090"
       AI_LICENSE_ROOT: /run/icp-license
-      AI_LICENSE_MACHINE_ID_FILE: /run/icp-host/machine-id
+      AI_LICENSE_MACHINE_ID_PATH: /run/icp-host/machine-id
     command: [alembic, upgrade, head]
     <<: *service-security
     tmpfs: [/tmp]
