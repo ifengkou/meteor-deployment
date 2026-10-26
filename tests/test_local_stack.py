@@ -37,12 +37,30 @@ class LocalStackTests(unittest.TestCase):
             )
         )
         self.env = self.root / "private/deployment.env"
+        self.tools_patch = patch.object(stack.license_container, "LicenseTools")
+        self.tools = self.tools_patch.start().return_value
+        self.tools.image = "fixture"
+        self.tools.probe = {"product_config_sha256": "a" * 64}
+        self.artifacts_patch = patch("license_artifacts.inspect_images", return_value={"productConfigSha256": "a" * 64})
+        self.artifacts_patch.start()
+        self.addCleanup(self.artifacts_patch.stop)
+        self.addCleanup(self.tools_patch.stop)
         self.args = argparse.Namespace(
             env_file=self.env,
             model_path=self.root / "model",
             catalog=self.catalog,
             metor_env_file=None,
         )
+
+    def test_license_init_rejects_running_writers_before_image_probe_or_files(self):
+        args = SimpleNamespace(env_file=self.env, license_root=self.root / "unused-license")
+        with patch.object(stack, "read_env", return_value={}), \
+             patch.object(stack, "ensure_native_services_stopped"), \
+             patch.object(stack, "compose", return_value=SimpleNamespace(stdout="metor\n")):
+            with self.assertRaisesRegex(ValueError, "stop metor"):
+                stack.license_init(args)
+        self.tools.initialize.assert_not_called()
+        self.assertFalse(args.license_root.exists())
 
     def test_license_recovery_request_is_private_and_does_not_overwrite(self):
         output = self.root / "request.json"

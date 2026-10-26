@@ -11,6 +11,15 @@ output_dir=${M6_IMAGE_OUTPUT_DIR:-$repo_root/dist/m6-amd64-images-$version}
 dockerhub_mirror=${M6_DOCKERHUB_MIRROR:-}
 mkdir -p "$output_dir"
 components=${M6_BUILD_COMPONENTS:-"ai metor mysql"}
+product_config=${LICENSE_PRODUCT_CONFIG:-license-build/license-product.json}
+for component in $components; do
+  case "$component" in
+    ai|metor)
+      python3 "$script_dir/license_artifacts.py" --workspace "$repo_root" --product-config "$product_config"
+      break
+      ;;
+  esac
+done
 config=""
 mysql_context=""
 cleanup() {
@@ -22,11 +31,15 @@ trap cleanup EXIT
 
 build_archive() {
   local component=$1 archive=$2 tag=$3 context=$4
+  local license_args=(--build-arg "GRADLE_OFFLINE=${M6_GRADLE_OFFLINE:-0}" --build-arg "AI_OFFLINE_BUILD=${M6_AI_OFFLINE_BUILD:-0}")
+  case "$component" in
+    ai|metor) license_args+=(--build-arg LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED --build-arg "LICENSE_PRODUCT_CONFIG=$product_config") ;;
+  esac
   docker buildx build --builder "$builder" --platform linux/amd64 --pull \
     --progress=plain --provenance=false \
     --metadata-file "$output_dir/$component.build-metadata.json" \
     --output "type=docker,dest=$archive.partial" \
-    --build-arg "GRADLE_OFFLINE=${M6_GRADLE_OFFLINE:-0}" \
+    "${license_args[@]}" \
     --tag "$tag" "$context" 2>&1 | tee "$output_dir/$component.build.log"
   python3 "$script_dir/inspect-docker-archive.py" "$archive.partial"
   mv "$archive.partial" "$archive"

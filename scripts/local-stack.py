@@ -15,6 +15,7 @@ import sys
 import tarfile
 
 import license_backup
+import license_container
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -175,10 +176,20 @@ def init(args):
 
 
 def license_init(args):
-    # Import only for this subcommand; no SDK, pip, machine-id or database required.
-    import license_init as installer
-    result = installer.initialize_license(args.license_root)
-    print(json.dumps(result))
+    config = read_env(args.env_file)
+    ensure_license_writers_stopped(args.env_file)
+    tools = license_container.LicenseTools(config, DEPLOYMENT)
+    root = args.license_root or license_backup.license_root(config, DEPLOYMENT)
+    print(json.dumps(tools.initialize(root)))
+
+
+def ensure_license_writers_stopped(env_file):
+    # Detect known business writers. Operators must also stop any old installer job.
+    ensure_native_services_stopped()
+    running = compose(env_file, "ps", "--status", "running", "--services",
+                      capture_output=True, text=True).stdout.splitlines()
+    if any(name in running for name in ("metor", "ai-runtime")):
+        raise ValueError("stop metor/ai-runtime and old license-init jobs before license maintenance")
 
 
 def validate_sql(sql, target):
@@ -308,10 +319,10 @@ def restore_metor(args):
 
 def backup_stack(args):
     config = read_env(args.env_file)
-    if config.get("WORKSPACE_RUNTIME_DIR"):
-        ensure_native_services_stopped()
+    ensure_native_services_stopped()
     root = license_backup.license_root(config, DEPLOYMENT)
     license_backup.preflight(root)
+    tools = license_container.LicenseTools(config, DEPLOYMENT)
     machine_fingerprint = license_backup.host_fingerprint(config, DEPLOYMENT)
     target = args.backup.resolve()
     if target == root.resolve() or root.resolve() in target.parents:
@@ -325,7 +336,7 @@ def backup_stack(args):
         if writers:
             compose(args.env_file, "stop", *writers)
         license_metadata = license_backup.backup(
-            root, target / license_backup.ARCHIVE, machine_fingerprint
+            root, target / license_backup.ARCHIVE, machine_fingerprint, tools.check
         )
         for database in ("metor_service", "metor_ai"):
             with (target / f"{database}.sql").open("wb") as output:
@@ -480,9 +491,11 @@ def restore_stack(args):
             raise ValueError("license archive is not covered by backup checksums")
     elif licensing_archive.exists():
         raise ValueError("license archive requires a licenseState manifest record")
+    ensure_license_writers_stopped(args.env_file)
+    tools = license_container.LicenseTools(config, DEPLOYMENT)
     stage = license_backup.prepare_restore(
         root, licensing_archive if metadata is not None else None, metadata,
-        license_backup.host_fingerprint(config, DEPLOYMENT),
+        license_backup.host_fingerprint(config, DEPLOYMENT), tools.check,
     )
     try:
         if config.get("WORKSPACE_RUNTIME_DIR"):
@@ -571,6 +584,11 @@ def build(args):
         )
     config = read_env(args.env_file)
     services = args.service or ["ai", "metor", "frontend"]
+    product_config = os.environ.get("LICENSE_PRODUCT_CONFIG", "license-build/license-product.json")
+    if any(service in ("ai", "metor") for service in services):
+        import license_artifacts
+
+        license_artifacts.verify_build_inputs(WORKSPACE, product_config)
     if args.offline and services != ["ai"]:
         raise ValueError(
             "offline source build is only supported for --service ai; deploy "
@@ -584,6 +602,9 @@ def build(args):
     for service in services:
         directory, key = components[service]
         options = ["docker", "build", "--platform", config["METOR_PLATFORM"], "-t", config[key]]
+        if service in ("ai", "metor"):
+            options += ["--build-arg", "LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED",
+                        "--build-arg", f"LICENSE_PRODUCT_CONFIG={product_config}"]
         if args.offline:
             options += ["--network=none"]
             if key == "AI_RUNTIME_IMAGE":
@@ -594,17 +615,33 @@ def build(args):
 
 
 def export_bundle(args):
+    import license_artifacts
+
+    if WORKSPACE is None:
+        raise ValueError("export requires the original source workspace")
     target = args.output.resolve()
-    target.mkdir(parents=True, exist_ok=False)
+    if target.exists():
+        raise FileExistsError(target)
     config = read_env(args.env_file)
     images = [
         config[key] for key in ("MYSQL_IMAGE", "AI_RUNTIME_IMAGE", "METOR_IMAGE", "FRONTEND_IMAGE")
     ]
+    tools = license_container.LicenseTools(config, DEPLOYMENT)
     image_records = json.loads(
         run(["docker", "image", "inspect", *images], capture_output=True, text=True).stdout
     )
-    if WORKSPACE is None:
-        raise ValueError("export requires the original source workspace")
+    if len(image_records) != 4 or tools.image != image_records[1]["Id"]:
+        raise ValueError("new release license tools must use its packaged AI image ID")
+    platforms = {(record["Os"], record["Architecture"]) for record in image_records}
+    if len(platforms) != 1 or next(iter(platforms)) not in {("linux", "amd64"), ("linux", "arm64")}:
+        raise ValueError("all four release images must use the same supported Linux platform")
+    licensing = license_artifacts.inspect_images(
+        run, image_records[1]["Id"], image_records[2]["Id"],
+        WORKSPACE / "ai-runtime-service/wheelhouse/metor_license_core-0.7.1-py3-none-any.whl",
+    )
+    if tools.probe["product_config_sha256"] != licensing["productConfigSha256"]:
+        raise ValueError("license tools and business images use different public configurations")
+    target.mkdir(parents=True)
     # Include only portable deployment inputs, never private envs, backups or host data.
     package_deployment = target / "deployment"
     package_deployment.mkdir()
@@ -617,7 +654,7 @@ def export_bundle(args):
     shutil.copy2(Path(__file__), package_deployment / "scripts/local-stack.py")
     shutil.copy2(DEPLOYMENT / "scripts/license_init.py",
                  package_deployment / "scripts/license_init.py")
-    for name in ("license_backup.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
+    for name in ("license_backup.py", "license_files.py", "license_container.py", "license_artifacts.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
         shutil.copy2(DEPLOYMENT / "scripts" / name, package_deployment / "scripts" / name)
     catalog_path = package_deployment / "config/embedding-models.example.json"
     catalog_path.parent.mkdir(parents=True)
@@ -652,6 +689,8 @@ def export_bundle(args):
             }
             for ref, record in zip(images, image_records)
         ],
+        "licenseToolsImage": tools.image,
+        "licensing": licensing,
         "repos": repos,
         "includesCredentials": False,
         "includesBusinessData": False,
@@ -746,8 +785,9 @@ def main():
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV)
     commands = parser.add_subparsers(dest="command", required=True)
     license_create = commands.add_parser("license-init",
-        help="Initialize offline licensing identity and clocks without changing database credentials")
-    license_create.add_argument("--license-root", type=Path, default=RUNTIME_ROOT / "license")
+        help="Offline SDK initialization; first import reviewed images and stop business/old installer jobs",
+        description="Requires root and fixed LICENSE_TOOLS_IMAGE. Stop metor, AI, native services and all old initializer jobs first; cannot detect arbitrary external writers.")
+    license_create.add_argument("--license-root", type=Path, help="Defaults to configured LICENSE_ROOT")
     recovery = commands.add_parser("license-recovery", help="AI online time recovery using its own API")
     recovery_commands = recovery.add_subparsers(dest="recovery_action", required=True)
     recovery_request = recovery_commands.add_parser("request")

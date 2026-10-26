@@ -1,6 +1,6 @@
 # 离线时间异常恢复
 
-适用 SDK 0.6.0、issuer 0.3.0。只在回拨或时间记录异常时操作；商业许可到期需要续期，普通导入不会重置时间状态。Metor 和 AI 各自独立恢复，只恢复发生异常的服务。若两个服务都异常，各自取得申请和应用对应文件。
+适用产品 SDK **0.7.1**、Issuer **0.4.0** 的 v1 恢复协议。只在回拨或时间记录异常时操作；商业许可到期需要续期，普通导入不会重置时间状态。Metor 和 AI 各自独立恢复，只恢复发生异常的服务。若两个服务都异常，各自取得申请和应用对应文件。
 
 ## 前置条件
 
@@ -30,7 +30,8 @@ python3 deployment/scripts/local-stack.py --env-file /absolute/docker.env \
   license-recovery request --output /absolute/ai-recovery-request.json
 ```
 
-脚本通过 `compose exec -T ai-runtime` 调用容器内维护客户端；客户端生成短期 ControlProof，直接请求本 AI 服务，不经过 Metor、不直接修改 clock。宿主只需 Python 标准库和 Docker。申请文件以 0600 创建，不覆盖已有文件。
+脚本通过 `compose exec -T ai-runtime` 调用容器内维护客户端；客户端按本镜像固化的公开配置创建临时 SDK Runtime，仅读取安装凭据生成短期 ControlProof 后关闭，不启动 checkpoint、不在客户端应用恢复。
+请求直接到本 AI 服务，由服务内长期 Runtime 处理，不经过 Metor、不直接修改 clock。宿主只需 Python 标准库和 Docker。申请文件以 0600 创建，不覆盖已有文件。
 
 已有申请仍适用时返回同一申请。只有 APPLIED/ALREADY_APPLIED 是确认完成；HTTP 202 或 OUTCOME_UNKNOWN 表示持久性尚未确认，请重试同一操作，取得申请尚未确认时不要交给签发方。
 
@@ -38,18 +39,29 @@ python3 deployment/scripts/local-stack.py --env-file /absolute/docker.env \
 
 允许文件出网时，将申请对象文件交给我方。禁止出网时，抄写 `product_id`、`installation_id`、`service` 和 `recovery_code`；Metor 是 RC1J、AI 是 RC1A，IC1 机器码不可替代恢复码。
 
-在我方签发环境调用：
+日常签发优先使用本机 Web。在我方环境启动已安装的入口：
 
 ```sh
-license-issuer sign-recovery --product icp-diag \
-  --key-id vendor-key-id --private-key /absolute/vendor/private.pem \
+license-issuer-web --config /absolute/vendor/issuer.toml
+```
+
+解锁私钥后进入“时间恢复”，上传申请对象；禁止文件出网时，输入安装 UUID、服务和恢复码。
+核对产品／服务／目标后确认签发，Web 自动确定立即生效的窗口（默认七天）和签发编号，下载签名文件交回客户。
+`issuer.toml` 必须是固化到本产品 SDK 公开配置的那一份，不能临时改产品、域、前缀或密钥来适配申请。
+
+需要 CLI 时，先按 [Issuer 恢复指南](../../license-issuer/docs/recovery-cn.md) 保存本次窗口和编号，再调用：
+
+```sh
+license-issuer sign-recovery --config /absolute/vendor/issuer.toml \
   --request-file /absolute/vendor/ai-recovery-request.json \
   --window-start "$RECOVERY_START_UTC" --window-end "$RECOVERY_END_UTC" \
-  --records-dir /absolute/vendor/records --output /absolute/vendor/recovery.json \
+  --output /absolute/vendor/recovery.json \
   --issuance-id "$ISSUANCE_UUID"
 ```
 
-`RECOVERY_START_UTC` 和 `RECOVERY_END_UTC` 使用当前约定的 UTC，格式如 `2026-10-23T10:00:00Z`；签发时刻不得晚于窗口开始，窗口结束不得晚于签发时刻七天。为文件入网和客户操作预留时间。`ISSUANCE_UUID` 使用本次唯一 UUID，同申请同参数重试必须复用原编号及记录目录，避免重复签发。
+`RECOVERY_START_UTC` 和 `RECOVERY_END_UTC` 使用当前约定的 UTC，格式为 `YYYY-MM-DDTHH:MM:SSZ`；签发时刻不得晚于窗口开始，窗口结束不得晚于签发时刻七天。
+CLI 需为窗口起点留出实际签发时间，不能把已过去的时间作为新窗口开始。`ISSUANCE_UUID` 使用本次唯一 UUID，同申请同参数重试必须复用原编号及同一 TOML 指定的记录目录，避免重复签发。
+产品、服务、密钥和记录路径来自 TOML；旧 `--product`／`--key-id`／`--private-key`／`--records-dir` 签发参数已不适用。私钥口令由终端安全提示输入，不放进 TOML。
 
 手抄模式把 `--request-file` 替换为：
 
@@ -95,4 +107,5 @@ POLICY_INVALID 表示包内 API 清单或构建摘要异常。用同版本正确
 
 ## 验证边界
 
-本阶段自动验证覆盖合成时钟、申请复用、在线恢复并发、未知持久性、两个语言互通、策略损坏和重启行为，均使用临时目录与合成密钥，不调整真实机器时钟。客户 Linux 的实际 UID/GID、挂载和最终镜像验收仍按交付阶段执行。
+自动验证使用隔离目录、合成密钥与受控时间源，不调整真实机器时钟；具体执行制品、平台和结果见 [SDK 升级手册](license-sdk-upgrade.md)。
+历史 SDK 0.6.0 的人工环境不代表当前 0.7.1 镜像验收，客户实际公钥兼容、目标 Linux AMD64 与人工页面项目均应单独确认。

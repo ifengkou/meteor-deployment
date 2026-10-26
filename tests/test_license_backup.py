@@ -17,7 +17,7 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import license_backup as licensing
-import license_init as installer
+import license_files as layout
 
 spec = importlib.util.spec_from_file_location("backup_stack_test", SCRIPTS / "local-stack.py")
 stack = importlib.util.module_from_spec(spec)
@@ -30,10 +30,22 @@ class LicenseBackupTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name).resolve()
         self.root = self.base / "license"
-        installer.initialize_license(
-            self.root, now=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            ownership=lambda *args: None, key_factory=lambda: b"x" * 32,
-        )
+        fixture = json.loads((SCRIPTS.parent / "config/clock-state-v1-vectors.json").read_text())
+        for name, (_, _, mode) in layout.DIRECTORIES.items():
+            path = self.root / name
+            path.mkdir(parents=True, exist_ok=True)
+            path.chmod(mode)
+        identity = {"schema_version": 1, "product_id": fixture["product_id"],
+                    "installation_id": fixture["installation_id"], "initialized": True}
+        (self.root / "identity/installation.json").write_text(json.dumps(identity))
+        (self.root / "identity/service.key").write_bytes(bytes.fromhex(fixture["service_key_hex"]))
+        for vector in fixture["vectors"]:
+            (self.root / "state" / vector["service"] / "clock.json").write_text(vector["envelope"])
+        for name, (_, _, mode) in layout.FILES.items():
+            if (self.root / name).exists():
+                (self.root / name).chmod(mode)
+        self.installation = fixture["installation_id"]
+        self.check = lambda root: self.installation
         (self.root / "shared/active.license.json").write_bytes(b'{"synthetic":true}')
         os.chmod(self.root / "shared/active.license.json", 0o640)
         self.archive = self.base / licensing.ARCHIVE
@@ -42,26 +54,26 @@ class LicenseBackupTests(unittest.TestCase):
         self.config = {"LICENSE_ROOT": str(self.root), "LICENSE_MACHINE_ID_PATH": str(self.host)}
         # Production still checks numeric ownership; tests cannot chown on macOS.
         self.addCleanup(patch.stopall)
-        self.check_metadata = licensing.check_metadata
-        patch.object(licensing, "check_metadata").start()
-        patch.object(installer, "preflight_ids").start()
+        self.check_metadata = layout.check_metadata
+        patch.object(layout, "check_metadata").start()
+        patch.object(layout, "preflight_ids").start()
 
     def create_archive(self):
         fingerprint = licensing.host_fingerprint(self.config, self.base)
-        return licensing.backup(self.root, self.archive, fingerprint)
+        return licensing.backup(self.root, self.archive, fingerprint, self.check)
 
     def test_numeric_owner_modes_and_unreadable_host_identity(self):
         info = SimpleNamespace(st_uid=21001, st_gid=21001, st_mode=0o100600)
         self.check_metadata(info, (21001, 21001, 0o600))
         with self.assertRaises(ValueError):
             self.check_metadata(info, (0, 21000, 0o640))
-        with patch.object(installer, "read_regular", side_effect=PermissionError("denied")):
+        with patch.object(layout, "read_regular", side_effect=PermissionError("denied")):
             self.assertIsNone(licensing.host_fingerprint(self.config, self.base))
 
     def test_compose_relative_paths_ignore_invocation_directory(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(licensing.license_root({}, self.base / "deployment"),
-                             self.base / "deployment/../runtime/license")
+                             self.base / "runtime/license")
             self.assertEqual(licensing.license_root({"LICENSE_ROOT": "custom"}, self.base),
                              self.base / "custom")
             with patch.dict(os.environ, {"LICENSE_ROOT": str(self.root)}):
@@ -70,10 +82,11 @@ class LicenseBackupTests(unittest.TestCase):
 
     def test_backup_preserves_state_and_reviewed_metadata_excludes_locks(self):
         (self.root / "state/metor/clock.lock").write_text("not-state")
-        (self.root / "shared/.upload-tmp").write_text("incomplete")
+        (self.root / "state/metor/clock.json.lock").write_text("real-java-sdk-lock")
+
         metadata = self.create_archive()
         contents = licensing.validate_archive(self.archive, metadata)
-        self.assertEqual(contents["identity/service.key"], b"x" * 32)
+        self.assertEqual(contents["identity/service.key"], bytes(range(32)))
         for name, content in contents.items():
             self.assertEqual(content, (self.root / name).read_bytes())
         self.assertEqual(self.archive.stat().st_mode & 0o777, 0o600)
@@ -114,7 +127,7 @@ class LicenseBackupTests(unittest.TestCase):
         target.mkdir()
         with patch.object(os, "chown"), patch.object(os, "fchown"):
             stage = licensing.prepare_restore(
-                target, self.archive, metadata, metadata["machineIdSha256"]
+                target, self.archive, metadata, metadata["machineIdSha256"], self.check
             )
             licensing.publish_restore(target, stage)
         for path in target.rglob("*"):
@@ -127,15 +140,15 @@ class LicenseBackupTests(unittest.TestCase):
         for fingerprint, target in ((None, self.base / "new"), ("different-host", self.base / "new"),
                                     (metadata["machineIdSha256"], self.root)):
             with self.assertRaises(ValueError):
-                licensing.prepare_restore(target, self.archive, metadata, fingerprint)
+                licensing.prepare_restore(target, self.archive, metadata, fingerprint, self.check)
         self.assertFalse(list(self.base.glob(".license-restore-*")))
 
     def test_legacy_backup_preserves_valid_identity_never_initializes(self):
         before = (self.root / "identity/installation.json").read_bytes()
-        with patch.object(installer, "initialize_license") as initialize:
-            self.assertIsNone(licensing.prepare_restore(self.root, None, None, None))
+        with patch.object(layout, "apply_permissions") as initialize:
+            self.assertIsNone(licensing.prepare_restore(self.root, None, None, None, self.check))
             with self.assertRaises(ValueError):
-                licensing.prepare_restore(self.base / "missing", None, None, None)
+                licensing.prepare_restore(self.base / "missing", None, None, None, self.check)
             initialize.assert_not_called()
         self.assertEqual((self.root / "identity/installation.json").read_bytes(), before)
 
@@ -144,11 +157,12 @@ class LicenseBackupTests(unittest.TestCase):
         with patch.object(os, "chown", side_effect=PermissionError("denied")):
             with self.assertRaises(PermissionError):
                 licensing.prepare_restore(self.base / "new", self.archive, metadata,
-                                          metadata["machineIdSha256"])
+                                          metadata["machineIdSha256"], self.check)
         self.assertFalse(list(self.base.glob(".license-restore-*")))
         (self.root / "state/ai/clock.json").write_bytes(b"broken")
-        with self.assertRaises(ValueError):
-            licensing.read_installation(self.root)
+        with self.assertRaisesRegex(ValueError, "SDK check"):
+            licensing.backup(self.root, self.base / "bad-clock.tar.gz", None,
+                             lambda root: (_ for _ in ()).throw(ValueError("SDK check")))
 
     def test_stack_backup_manifest_and_checksums_include_private_license_archive(self):
         env = self.base / "deployment.env"
@@ -158,7 +172,8 @@ class LicenseBackupTests(unittest.TestCase):
             **self.config, "AI_EMBEDDING_MODELS_CONFIG_HOST_PATH": str(model)
         }.items()))
         target = self.base / "backup"
-        with patch.object(stack, "compose", return_value=SimpleNamespace(stdout="")):
+        with patch.object(stack, "compose", return_value=SimpleNamespace(stdout="")), \
+             patch.object(stack.license_container, "LicenseTools", return_value=SimpleNamespace(check=self.check)):
             stack.backup_stack(argparse.Namespace(env_file=env, backup=target))
         manifest = json.loads((target / "backup-manifest.json").read_text())
         self.assertEqual(manifest["licenseState"]["archive"], licensing.ARCHIVE)
@@ -180,7 +195,10 @@ class LicenseBackupTests(unittest.TestCase):
             f"{stack.file_sha256(path)}  {path.name}\n"
             for path in target.iterdir() if path.name != "SHA256SUMS"
         ))
-        with patch.object(stack, "mysql") as mysql, patch.object(stack, "compose") as compose:
+        with patch.object(stack, "mysql") as mysql, \
+             patch.object(stack, "ensure_license_writers_stopped"), \
+             patch.object(stack.license_container, "LicenseTools", return_value=SimpleNamespace(check=self.check)), \
+             patch.object(stack, "compose") as compose:
             with self.assertRaisesRegex(ValueError, "nonempty"):
                 stack.restore_stack(argparse.Namespace(env_file=env, backup=target))
             mysql.assert_not_called()

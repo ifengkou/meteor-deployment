@@ -4,7 +4,7 @@
 
 ## 同架构镜像导出
 
-先完成源码构建和运行验收，再导出配置中选定的四个运行镜像：
+先按 [SDK 制作、安装与升级](license-sdk-upgrade.md) 准备正式 SDK 0.7.1 和同一份 Issuer 公开配置，完成客户构建和目标平台验收，再导出配置中选定的四个运行镜像。制作方私有 env 的 LICENSE_TOOLS_IMAGE 必须是本次 AI 镜像不可变 ID：
 
 ```bash
 python3 deployment/scripts/local-stack.py export /absolute/path/to/new-full-stack-bundle
@@ -23,12 +23,11 @@ python3 deployment/scripts/local-stack.py export /absolute/path/to/new-full-stac
 使用 export 生成的同架构包时，先从包根目录校验，再导入：
 
 ```bash
-sha256sum -c SHA256SUMS
-docker load --input images/full-stack.tar
+sh deployment/scripts/import-images.sh .
 python3 deployment/scripts/local-stack.py compose config --quiet
 ```
 
-最后一条要求已经按首次部署流程生成目标机 `runtime/config/docker.env`。没有私有配置时先执行 AMD64 文档中的首次配置步骤。MySQL、AI 迁移、AI、Metor、前端按顺序启动。
+导入脚本先验证清单与固定 SDK 摘要，加载后核对镜像 reference、ID 和架构。最后一条要求已经按首次部署流程生成目标机 runtime/config/docker.env。没有私有配置时先生成配置，再在业务启动前执行 sudo python3 deployment/scripts/local-stack.py license-init。该操作调用包内固定镜像的 SDK，无网络、不启动数据库／模型，宿主不安装 SDK。已有客户按升级手册保留授权根，不重新初始化。随后 MySQL、AI 迁移、AI、Metor、前端按顺序启动。
 
 模型权重和获准业务备份通过受控介质另行传输。Chat 模型服务需由目标环境提供，不能将离线镜像加载等同于真实模型已可用。
 

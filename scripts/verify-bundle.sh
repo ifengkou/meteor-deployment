@@ -7,6 +7,7 @@ for required in manifest.json SHA256SUMS deployment/compose.ai.yaml deployment/s
   [ -e "$required" ] || { echo "missing bundle file: $required" >&2; exit 1; }
 done
 sha256sum -c SHA256SUMS
+python3 deployment/scripts/license_artifacts.py --verify-bundle .
 if find wheelhouse -type f 2>/dev/null | grep -Eiq '/(nvidia|cuda|triton)[^/]*\.(whl|tar\.gz)$'; then
   echo "GPU/CUDA package found in CPU-only wheelhouse" >&2
   exit 1

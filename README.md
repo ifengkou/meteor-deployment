@@ -75,7 +75,10 @@ Metor 对应 `METOR_IMAGE`，AI 对应 `AI_RUNTIME_IMAGE`。更新后端前暂�
 | Buildx、下载与缓存 | [AMD64 构建细节](docs/amd64-build.md) |
 | 同架构运行镜像导出 | [离线交付](docs/offline-deployment.md) |
 | 一致性备份与隔离恢复 | [备份恢复](docs/backup-restore.md) |
+| SDK 0.7.1 首次安装、既有安装升级与回退 | [授权 SDK 升级](docs/license-sdk-upgrade.md) |
+| 新 SDK 独立容器实部署、访问方式及复杂步骤记录 | [0.7.1 容器部署记录](docs/sdk071-container-deployment.md) |
 | 常见错误 | [故障处理](docs/troubleshooting.md) |
+| 授权生成、签发、校验、防回拨与恢复原理（Mermaid） | [授权机制实现逻辑](docs/license-implementation.md) |
 
 AI 本地源码运行与模型业务配置仍由 AI 工程文档维护，不在这里复制。旧独立部署资料放在 `archive/standalone/`，只供历史对照，不运行其脚本。
 
@@ -83,31 +86,57 @@ AI 本地源码运行与模型业务配置仍由 AI 工程文档维护，不在�
 
 ### 离线授权初始化与当前能力
 
-在独立安装根目录显式初始化许可资料，不重建数据库凭据：
+产品固定使用正式 SDK **0.7.1**，我方 Issuer 当前版本 **0.4.0**；两者继续使用 v1 商业许可与恢复协议。
+制作方从 SDK Release 准备制品，并将本产品 Issuer 下载的同一份 `license-product.json` 原字节用于两端构建：
+[Metor 授权构建](../metor-service/license-build/README.md)、[AI 授权构建](../ai-runtime-service/license-build/README.md)。
+客户不需要 SDK 包、发行制作工具或签发私钥；客户镜像的模式、信任和 API 清单摘要已在制作期固定，运行环境变量不能替换。
 
-```bash
-sudo python3 deployment/scripts/local-stack.py license-init --license-root /opt/icp-diag/runtime/license
+**首次安装顺序：导入完整交付镜像 → 准备部署配置 → 初始化安装资料 → 启动业务 → 取得申请、签发、导入。**
+便携包先运行包内 `deployment/scripts/import-images.sh`，再按 [离线交付](docs/offline-deployment.md) 准备配置。
+源码部署还需将已评审 AI 工具镜像的不可变 ID 写入 `runtime/config/docker.env`：
+
+```dotenv
+LICENSE_ROOT=/opt/icp-diag/runtime/license
+LICENSE_TOOLS_IMAGE=sha256:<已评审的本地AI镜像完整64位ID>
 ```
 
-该命令仅使用 Python 标准库，需要 root 设置数值所有者。Metor UID/GID 为
+镜像 ID 用 `docker image inspect --format '{{.Id}}' ai-runtime-service:<release>` 查询，不能填浮动 tag。
+便携包通过 `manifest.licenseToolsImage` 自动固定工具镜像，不要求客户另选一份；
+manifest 的 `licensing` 同时记录 SDK 版本、正式制品摘要和公开配置摘要，镜像导入前后均需通过包内核验。
+
+在停止 Metor、AI、本机业务进程及所有旧初始化任务后，执行：
+
+```bash
+sudo python3 deployment/scripts/local-stack.py --env-file /absolute/runtime/config/docker.env \
+  license-init
+```
+
+宿主命令只使用 Python 标准库与 Docker，在固定 AI 镜像内调用 SDK 初始化器，使用
+`--pull=never`、`--network=none`，不启动 AI 主程序、数据库或模型服务；不在宿主安装 SDK。
+需要 root 设置数值所有者。Metor UID/GID 为
 `21001:21001`，AI 为 `21002:21002`，共同读取组为 `21000`。已有账号 ID 冲突或
 目录权限不符时明确失败，不递归修改无关数据。升级既有安装前，应在隔离环境核对
 原业务卷的数值所有者与新镜像的读写权限；初始化命令只管理许可目录，不迁移业务卷。
 
-首次生成安装 UUID、32 字节服务密钥及两端 HMAC 时间种子，最后发布完成标记。
-中断后保留同一身份和密钥续接；完成后重复执行只验证，时间种子或密钥丢失时拒绝
-补造。应用本身不会初始化这些文件。请保留整个许可目录，并设置
-`runtime/config/docker.env` 中的 `LICENSE_ROOT` 为该目录。
+身份、32 字节安装主密钥及两端初始 clock 全部由 SDK 生成，工具只落实受审的目录权限。
+正常首次结果为 `INITIALIZED`，重复核对为 `ALREADY_INITIALIZED`。合法 SDK draft 可续作；
+旧 `.identity-stage-*` 或其他孤立资料拒绝自动处理，保留现场人工检查。若 SDK 已完成、权限收尾失败，
+保留资料并在停止写入后重试同一命令，不删除目录。完成安装缺少 key 或 clock 时不会补造。
+普通应用启动也不会自动初始化或修复这些资料，操作者不用手工制作文件。
+
+首次启动后，管理员在“设置 → 软件授权”取得申请，交我方 Issuer 签发，再从同页导入。
+只有 Metor 通过 SDK 发布共享商业许可；SDK 在原子发布前设置并确认共享组和 `0640`，AI 只读本地验证。
+SDK 的 `start()`／`close()` 管理时间检查点，产品不再有另一套 HMAC／商业导入事务或 checkpoint 循环。
+商业许可异常不替代健康检查，也不令应用退出。
 
 Compose 保持身份只读、共享许可仅 Java 可写及两端状态隔离。入口仅在真实宿主
 machine-id 文件存在时选择 `compose.license-host.yaml`；可用 `LICENSE_MACHINE_ID_PATH`
 指定实际来源。缺少该文件不自动生成替代标识，合法无绑定许可无需机器标识。
 
-SDK 当前为 `0.6.0`，我方 issuer 为 `0.3.0`。两个后端引入固定发行制品，构建资料见
-[Metor 授权构建](../metor-service/license-build/README.md)和 [AI 授权构建](../ai-runtime-service/license-build/README.md)。客户镜像默认要求构建时提供我方公钥；普通运行环境变量
-不能切换发行模式或注入信任。商业授权异常不替代健康检查，也不令应用退出。
-
-本地管理 API、关键请求/方法拦截与单服务在线时间恢复已实现。Phase 7 管理页面开发及自动检查完成，人工 UI 验收待确认；客户目标 Linux 的实际 UID/GID、只读挂载、升级及最终镜像仍在 Phase 8 验收，不将当前制品当作客户交付已验收。
+已有完整安装升级保留整个授权目录，不重新 init、不换身份、不重新签发正常旧许可。
+故障回退旧业务镜像时保留最新 clock，并继续使用新版部署工具及固定工具镜像；备份的协议完整性核验只调用 SDK 只读 `check`。
+SDK 新 record lock 与旧安装器 flock 不构成相互排斥，不能同时运行；工具只能检测已知业务写入者，操作者仍须停止外部旧任务。
+旧客户全部公开信任的兼容核对、人工页面操作和目标 Linux AMD64 验收须单独记录，不能以通用 SDK 测试或 ARM64 结果代替。
 
 部署管理需要 Python 3.9+、Docker Engine、Compose 2.24.4+，备份恢复使用 `tar`、`gzip`。脚本只用 Python 标准库，不要求宿主安装 JDK、Node 或 Python 业务依赖。
 
@@ -133,10 +162,12 @@ python3 -m pytest deployment/tests/test_deployment_assets.py
 
 提交部署仓库前检查忽略规则，不加入私有 env、运行数据、客户样本、镜像归档或数据库备份。模型清单示例和占位 env 模板可提交，真实密钥只保存在安装根目录的私有 runtime 中。
 
-### 时间异常恢复（Phase 6）
+### 时间异常恢复
 
-使用 SDK 0.6.0 / issuer 0.3.0，Metor 与 AI 独立在线恢复。操作步骤、手抄申请及错误处理见 [中文恢复手册](docs/license-recovery.md)。AI 维护客户端已包含在镜像内，宿主无需安装授权 SDK。
+使用 SDK 0.7.1 的同一服务 Runtime，Metor 与 AI 独立在线恢复。操作步骤、手抄申请及错误处理见 [中文恢复手册](docs/license-recovery.md)。AI 维护客户端已包含在镜像内，宿主无需安装授权 SDK。
 
 ### 离线授权图解手册
 
-打开 [八主题可视化入口](docs/license-guide/index.html)，或查看[文件目录](docs/license-guide/README.md)。包含授权控制、防回拨与恢复、issuer/SDK/两服务接入、客户操作，以及包内清单、CAS、原子提交和备份。全部 HTML 可离线打开，无需启动业务服务；时间页交互仅为教学模型。
+打开 [八主题可视化入口](docs/license-guide/index.html)，或查看[文件目录](docs/license-guide/README.md)。这些 HTML 保留为 2026-10-23 的 SDK 0.6.0 历史讲解；
+当前接入、安装和升级以 [SDK 升级手册](docs/license-sdk-upgrade.md) 及上述新构建说明为准，不运行旧初始化或 DER 输入示例。
+全部 HTML 可离线打开，无需启动业务服务；时间页交互仅为教学模型。
