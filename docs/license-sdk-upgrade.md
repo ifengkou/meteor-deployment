@@ -65,6 +65,8 @@ python3 deployment/scripts/local-stack.py init --model-path /absolute/models/emb
 
 核对 runtime/config/docker.env 的镜像 tag、METOR_PLATFORM、LICENSE_ROOT 和真实模型路径。新包自动使用 manifest 中的固定工具镜像；源码部署需要显式填写 LICENSE_TOOLS_IMAGE。machine-id 只挂载实际宿主文件，不生成替代标识。
 
+`init` 仍生成历史 `p6-local` 应用 tag，不会从 manifest 自动选择业务镜像。必须先按[首次部署](customer-release/02-deploy.md)将三个应用镜像与 MySQL 引用、平台替换成 manifest 中的实际值，并配置宿主目录与权限，再初始化授权和启动。
+
 ```bash
 # 新环境尚未启动业务。若有旧安装任务或源码服务，先全部停止。
 sudo python3 deployment/scripts/local-stack.py license-init

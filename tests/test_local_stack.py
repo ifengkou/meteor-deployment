@@ -155,6 +155,11 @@ class LocalStackTests(unittest.TestCase):
         self.assertTrue((target / "deployment/config/embedding-models.example.json").is_file())
         self.assertFalse((target / "runtime").exists())
         self.assertFalse((target / "deployment/.env.full-local").exists())
+        manifest = json.loads((target / "manifest.json").read_text())
+        self.assertEqual(set(manifest["repos"]),
+                         {"frontend", "ai-runtime-service", "metor-service", "deployment"})
+        self.assertEqual(manifest["repos"]["deployment"]["head"], "fixture")
+        self.assertEqual(manifest["repos"]["deployment"]["workingTree"], ["fixture"])
         self.assertNotIn(config["MYSQL_ROOT_PASSWORD"], (target / "SHA256SUMS").read_text())
         portable_env = target / "runtime/config/docker.env"
         subprocess.run([

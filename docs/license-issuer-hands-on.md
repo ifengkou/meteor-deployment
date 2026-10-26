@@ -1,5 +1,7 @@
 # 使用 license-issuer 完成商业签发与时间恢复
 
+> 历史演练资料：下文使用旧版 Issuer 的 `--product`、`--key-id` 等实例参数，当前 Issuer 0.4.0 已移除这些参数。正式交付请使用[授权签发](customer-release/03-license-issue.md)与[授权导入](customer-release/04-license-import.md)，当前 CLI 统一接收 `--config /absolute/vendor/issuer.toml`。不要直接运行下文旧签发命令。
+
 本手册以当前本机 Docker 验收安装为例，直接执行 `license-issuer` CLI。不会调用 `manual.py` 的签发封装，也不复用预签发的 fixtures。你将亲自取得申请、签发、验签、导入，再取得时间恢复申请、签发恢复文件和应用。
 
 客户操作和我方签发在本次演练中位于同一台电脑、不同目录；实际交付时分别位于客户内网和我方签发机。双方只交换申请信息和签名结果文件，私钥、口令及签发记录留在我方。

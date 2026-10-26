@@ -663,7 +663,7 @@ def export_bundle(args):
     run(["docker", "save", "--output", str(target / "images/full-stack.tar"), *images])
     shutil.copytree(DEPLOYMENT / "docs", package_deployment / "docs")
     repos = {}
-    for name in ("frontend", "ai-runtime-service", "metor-service"):
+    for name in ("frontend", "ai-runtime-service", "metor-service", "deployment"):
         repos[name] = {
             "head": run(
                 ["git", "-C", str(WORKSPACE / name), "rev-parse", "HEAD"],

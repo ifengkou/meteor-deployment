@@ -2,6 +2,8 @@
 
 部署统一使用独立 `deployment/` 工程，不再交付单独 AI 或 Metor Compose。以下命令从包含 `deployment/` 的工作区或安装根目录执行。
 
+首次客户正式发版先读[分阶段交付指南](customer-release/README.md)：按本次发行完成收口、构建、部署、签发与导入，并单独准备模型和业务资料。
+
 ## 同架构镜像导出
 
 先按 [SDK 制作、安装与升级](license-sdk-upgrade.md) 准备正式 SDK 0.7.1 和同一份 Issuer 公开配置，完成客户构建和目标平台验收，再导出配置中选定的四个运行镜像。制作方私有 env 的 LICENSE_TOOLS_IMAGE 必须是本次 AI 镜像不可变 ID：
