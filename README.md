@@ -4,6 +4,8 @@
 
 所有发布统一使用这里的 stack。业务工程只维护源码开发、测试和 Dockerfile，不再使用各工程独立 Compose 发布。
 
+交付包文档仅从 `customer-docs/` 的显式白名单导出，包含客户使用、安装、授权、业务配置和运维五份指南；本工程 `docs/` 下的研发过程、历史演示、构建与验收记录不进入客户包。
+
 **客户正式交付从 [分阶段交付指南](docs/customer-release/README.md) 开始**：包含当前收口结论、构建、部署、授权签发、授权导入，以及模型与业务资料准备。历史演示部署记录不作为本次发行的验收结果。
 
 ## 唯一配置与命令入口
@@ -63,11 +65,13 @@ python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait fronten
 ```
 
 
-页面默认入口为 `http://127.0.0.1:18180`。前端镜像 tag 不必与旧名称一致，架构需匹配 `METOR_PLATFORM`。
+前端默认监听 `0.0.0.0:18180`，本机可访问 `http://127.0.0.1:18180`，局域网使用宿主机 IP，并允许对应防火墙／安全组来源。前端镜像 tag 不必与旧名称一致，架构需匹配 `METOR_PLATFORM`。
 
 Metor 对应 `METOR_IMAGE`，AI 对应 `AI_RUNTIME_IMAGE`。更新后端前暂停新写入，等待运行任务结束，并做一致性备份。具体操作只维护在[日常更新](docs/updates.md)，不重新初始化、不删除数据卷。
 
 ## 文档
+
+本机最新验证与清理结果见 [2026-10-26 Linux ARM64 交付验证](docs/arm64-local-validation-20261026.md)。新项目 18183 与原开发项目 18180 并存。
 
 | 操作 | 文档 |
 |---|---|
@@ -93,8 +97,8 @@ AI 本地源码运行与模型业务配置仍由 AI 工程文档维护，不在�
 [Metor 授权构建](../metor-service/license-build/README.md)、[AI 授权构建](../ai-runtime-service/license-build/README.md)。
 客户不需要 SDK 包、发行制作工具或签发私钥；客户镜像的模式、信任和 API 清单摘要已在制作期固定，运行环境变量不能替换。
 
-**首次安装顺序：导入完整交付镜像 → 准备部署配置 → 初始化安装资料 → 启动业务 → 取得申请、签发、导入。**
-便携包先运行包内 `deployment/scripts/import-images.sh`，再按 [离线交付](docs/offline-deployment.md) 准备配置。
+**当前完整包首次安装顺序：校验 tar.gz 与解压 → 导入完整镜像 → root 运行 `python3 deployment/scripts/prepare-runtime.py` → 单独 `license-init` → 启动业务 → 取得申请、签发、导入。** export 自动纳入完整 Embedding，并复用工作区 runtime/config/docker.env 的三项数据库密码及 JWT；目标机镜像、路径、目录与权限由准备脚本落实。完整命令见[客户部署](docs/customer-release/02-deploy.md)。
+便携包先运行包内 `deployment/scripts/import-images.sh`，再由 `prepare-runtime.py` 准备配置。旧 init 仍供源码本地开发使用，不用于当前完整客户包首次安装。
 源码部署还需将已评审 AI 工具镜像的不可变 ID 写入 `runtime/config/docker.env`：
 
 ```dotenv
@@ -104,7 +108,7 @@ LICENSE_TOOLS_IMAGE=sha256:<已评审的本地AI镜像完整64位ID>
 
 镜像 ID 用 `docker image inspect --format '{{.Id}}' ai-runtime-service:<release>` 查询，不能填浮动 tag。
 便携包通过 `manifest.licenseToolsImage` 自动固定工具镜像，不要求客户另选一份；
-manifest 的 `licensing` 同时记录 SDK 版本、正式制品摘要和公开配置摘要，镜像导入前后均需通过包内核验。
+manifest 的 `licensing` 同时记录 SDK 版本、正式制品摘要和公开配置摘要，镜像导入前后均需通过包内核验。 新导出还记录各镜像 configId（归档配置原字节摘要），以兼容经典 Docker 与 containerd 镜像存储的 ID 表示差异；运行时仍解析为已核准的不可变本地 ID。
 
 在停止 Metor、AI、本机业务进程及所有旧初始化任务后，执行：
 
@@ -140,7 +144,7 @@ machine-id 文件存在时选择 `compose.license-host.yaml`；可用 `LICENSE_M
 SDK 新 record lock 与旧安装器 flock 不构成相互排斥，不能同时运行；工具只能检测已知业务写入者，操作者仍须停止外部旧任务。
 旧客户全部公开信任的兼容核对、人工页面操作和目标 Linux AMD64 验收须单独记录，不能以通用 SDK 测试或 ARM64 结果代替。
 
-部署管理需要 Python 3.9+、Docker Engine、Compose 2.24.4+，备份恢复使用 `tar`、`gzip`。脚本只用 Python 标准库，不要求宿主安装 JDK、Node 或 Python 业务依赖。
+客户部署管理支持 Python 3.8.10+，AMD64 导出包固定携带 Compose v2.33.0，统一入口自动调用包内工具；系统 Docker 24.0.7 与 docker-compose 1.25.0 可保留。源码开发入口继续使用 `docker compose`（2.24.4+）。备份恢复使用 `tar`、`gzip`。脚本只用 Python 标准库，不要求宿主安装 JDK、Node 或 Python 业务依赖。
 
 无需 Docker 的脚本安全测试：
 

@@ -129,13 +129,20 @@ class LocalStackTests(unittest.TestCase):
                 stack.build(argparse.Namespace(env_file=self.env, offline=False, service=None))
             run.assert_not_called()
 
-    def test_export_packages_deployment_docs_and_catalog_without_private_config(self):
+    def test_export_packages_model_and_only_approved_credentials(self):
         with patch("builtins.print"):
             stack.init(self.args)
         config = stack.read_env(self.env)
         for key in ("MYSQL_IMAGE", "AI_RUNTIME_IMAGE", "METOR_IMAGE", "FRONTEND_IMAGE"):
             config[key] = key.lower() + ":fixture"
         target = self.root / "bundle"
+        model = self.root / "model"
+        for name in ("modules.json", "tokenizer_config.json", "tokenizer.json"):
+            (model / name).write_text("{}")
+        (model / "model.safetensors").write_bytes(b"synthetic weights")
+        (model / "model-manifest.json").write_text(json.dumps({
+            "artifactName": "bge-small-zh-v1.5", "dimension": 512,
+        }))
 
         def fake_run(command, **kwargs):
             if command[:3] == ["docker", "image", "inspect"]:
@@ -144,22 +151,71 @@ class LocalStackTests(unittest.TestCase):
                     for _ in range(4)
                 ]))
             if command[:2] == ["docker", "save"]:
-                Path(command[3]).write_bytes(b"fixture archive")
+                manifests = []
+                with tarfile.open(command[3], "w") as archive:
+                    for i, reference in enumerate(command[4:]):
+                        raw = json.dumps({"os": "linux", "architecture": "amd64", "fixture": i}).encode()
+                        name = f"config-{i}.json"
+                        info = tarfile.TarInfo(name); info.size = len(raw)
+                        archive.addfile(info, io.BytesIO(raw))
+                        manifests.append({"Config": name, "RepoTags": [reference]})
+                    raw = json.dumps(manifests).encode()
+                    info = tarfile.TarInfo("manifest.json"); info.size = len(raw)
+                    archive.addfile(info, io.BytesIO(raw))
                 return SimpleNamespace(stdout="")
+            if command[:2] == ["docker", "run"]:
+                return SimpleNamespace(stdout='{"dimension":512}')
             return SimpleNamespace(stdout="fixture\n")
 
-        with patch.object(stack, "read_env", return_value=config), \
+        compose_fixture = self.root / "compose-binary"
+        compose_fixture.write_bytes(b"synthetic standalone Compose")
+        package_compose = stack.customer_bundle.package_compose
+        with patch.object(stack.customer_bundle, "COMPOSE_SHA256", stack.file_sha256(compose_fixture)), \
+                patch.object(stack.customer_bundle, "package_compose",
+                             side_effect=lambda source, destination: package_compose(compose_fixture, destination)), \
+                patch.object(stack, "read_env", return_value=config), \
                 patch.object(stack, "run", side_effect=fake_run), patch("builtins.print"):
-            stack.export_bundle(argparse.Namespace(env_file=self.env, output=target))
-        self.assertTrue((target / "deployment/docs/amd64.md").is_file())
+            stack.export_bundle(argparse.Namespace(env_file=self.env, output=target,
+                                                   credentials_env=self.env, model_path=model))
+            compressed = self.root / "customer.tar.gz"
+            stack.export_bundle(argparse.Namespace(env_file=self.env, output=compressed,
+                                                   credentials_env=self.env, model_path=model))
+        with tarfile.open(compressed) as archive:
+            self.assertEqual(archive.extractfile("customer/models/embedding/model.safetensors").read(),
+                             b"synthetic weights")
+            self.assertIn(config["MYSQL_ROOT_PASSWORD"].encode(),
+                          archive.extractfile("customer/deployment/config/customer.env").read())
+            self.assertIn("customer/deployment/scripts/prepare-runtime.py", archive.getnames())
+            self.assertIn("customer/deployment/scripts/ai631-rules.py", archive.getnames())
+        self.assertEqual({p.name for p in (target / "deployment/docs").iterdir()},
+                         set(stack.CUSTOMER_DOCUMENTS))
+        self.assertFalse((target / "deployment/docs/customer-release/readiness.md").exists())
+        self.assertFalse((target / "deployment/docs/arm64-local-validation-20261026.md").exists())
+        self.assertFalse((target / "deployment/migrations/metor/README.md").exists())
+        self.assertFalse((target / "deployment/.env.full-local.example").exists())
+        import re
+        for document in [target / "deployment/README.md", *(target / "deployment/docs").glob("*.md")]:
+            for link in re.findall(r"\[[^\]]+\]\(([^)]+)\)", document.read_text()):
+                if "://" not in link and not link.startswith("#"):
+                    self.assertTrue((document.parent / link.split("#")[0]).exists(), str(document) + link)
         self.assertTrue((target / "deployment/config/embedding-models.example.json").is_file())
         self.assertFalse((target / "runtime").exists())
         self.assertFalse((target / "deployment/.env.full-local").exists())
+        private = stack.customer_bundle.read_env(target / stack.customer_bundle.CREDENTIAL_PATH)
+        self.assertEqual(set(private), set(stack.customer_bundle.CREDENTIAL_KEYS))
+        self.assertEqual(private["MYSQL_ROOT_PASSWORD"], config["MYSQL_ROOT_PASSWORD"])
+        self.assertTrue((target / "models/embedding/model.safetensors").is_file())
         manifest = json.loads((target / "manifest.json").read_text())
         self.assertEqual(set(manifest["repos"]),
                          {"frontend", "ai-runtime-service", "metor-service", "deployment"})
         self.assertEqual(manifest["repos"]["deployment"]["head"], "fixture")
         self.assertEqual(manifest["repos"]["deployment"]["workingTree"], ["fixture"])
+        self.assertTrue(manifest["includesCredentials"])
+        self.assertTrue(manifest["includesModelWeights"])
+        self.assertEqual(manifest["compose"]["version"], "v2.33.0")
+        self.assertEqual((target / manifest["compose"]["path"]).read_bytes(), compose_fixture.read_bytes())
+        self.assertIn("deployment/bin/docker-compose-v2", (target / "SHA256SUMS").read_text())
+        self.assertTrue((target / "deployment/bin/docker-compose-LICENSE").is_file())
         self.assertNotIn(config["MYSQL_ROOT_PASSWORD"], (target / "SHA256SUMS").read_text())
         portable_env = target / "runtime/config/docker.env"
         subprocess.run([
@@ -186,7 +242,7 @@ class LocalStackTests(unittest.TestCase):
         self.assertEqual(
             compose.call_args_list[1].args[1:], ("stop", "frontend", "metor", "ai-runtime")
         )
-        self.assertFalse(any(call.args[1] == "start" for call in compose.call_args_list))
+        self.assertFalse(any(call.args[1] in ("start", "up") for call in compose.call_args_list))
 
     def test_shared_overlay_is_selected_without_changing_other_projects(self):
         with patch("builtins.print"):
@@ -345,6 +401,27 @@ class LocalStackTests(unittest.TestCase):
         for path in args.backup.iterdir():
             self.assertEqual(path.stat().st_mode & 0o777, 0o600, path.name)
 
+    def test_backup_resumes_existing_writers_without_removed_migration_dependency(self):
+        with patch("builtins.print"):
+            stack.init(self.args)
+        args = argparse.Namespace(env_file=self.env, backup=self.root / "backup")
+        def compose_result(env, *command, **kwargs):
+            if command[0] == "start":
+                raise RuntimeError("ai-runtime is missing dependency ai-migrate")
+            return SimpleNamespace(stdout="frontend\nmetor\nai-runtime\n" if command[0] == "ps" else "")
+        with patch.object(stack.license_backup, "host_fingerprint", return_value=None), \
+             patch.object(stack.license_backup, "preflight"), \
+             patch.object(stack.license_backup, "backup", return_value={}), \
+             patch.object(stack, "ensure_native_services_stopped"), \
+             patch.object(stack, "compose", side_effect=compose_result) as compose, \
+             patch("builtins.print"):
+            stack.backup_stack(args)
+        resumes = [call.args[1:] for call in compose.call_args_list if call.args[1] == "up"]
+        self.assertEqual(resumes, [
+            ("up", "-d", "--no-deps", "--no-recreate", "--wait", service)
+            for service in ("ai-runtime", "metor", "frontend")
+        ])
+
     def test_shared_backup_covers_native_configs_with_private_checksums(self):
         with patch("builtins.print"):
             stack.init(self.args)
@@ -370,19 +447,47 @@ class LocalStackTests(unittest.TestCase):
             self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
             self.assertIn(f"{stack.file_sha256(copied)}  {name}", checksum_list)
 
-    def test_compose_only_accepts_two_isolated_projects(self):
+    def test_compose_accepts_validated_isolated_project_names(self):
         with patch("builtins.print"):
             stack.init(self.args)
         with patch.object(stack, "PROJECT", "metor-service"), patch.object(stack, "run") as run:
             with self.assertRaisesRegex(ValueError, "unsupported"):
                 stack.compose(self.env, "ps")
             run.assert_not_called()
-        with (
-            patch.object(stack, "PROJECT", "icp-diag-local-restore-check"),
-            patch.object(stack, "run") as run,
-        ):
+        for project in ("icp-diag-local-restore-check", "icp-diag-arm64-verify"):
+            with patch.object(stack, "PROJECT", project), patch.object(stack, "run") as run:
+                stack.compose(self.env, "ps")
+                self.assertIn(project, run.call_args.args[0])
+        for project in ("icp-diag-../local", "icp-diag-UPPER", "icp-diag-a" + "b" * 64):
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                stack.project_name(project)
+
+    def test_customer_compose_uses_only_verified_private_tool_and_preserves_source_cli(self):
+        with patch("builtins.print"):
+            stack.init(self.args)
+        root = self.root.resolve() / "portable"
+        deployment = root / "deployment"
+        binary = root / stack.customer_bundle.COMPOSE_PATH
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"synthetic Compose executable")
+        binary.chmod(0o755)
+        checksum = stack.file_sha256(binary)
+        record = {"version": "v2.33.0", "path": stack.customer_bundle.COMPOSE_PATH,
+                  "sha256": checksum, "architecture": "amd64", "os": "linux"}
+        (root / "manifest.json").write_text(json.dumps({"compose": record}))
+        with patch.object(stack, "DEPLOYMENT", deployment), \
+             patch.object(stack.customer_bundle, "COMPOSE_SHA256", checksum), \
+             patch.object(stack, "run") as run:
             stack.compose(self.env, "ps")
-            self.assertIn("icp-diag-local-restore-check", run.call_args.args[0])
+            self.assertEqual(run.call_args.args[0][:2], ["docker", "compose"])
+            with patch.object(stack, "WORKSPACE", None):
+                stack.compose(self.env, "ps")
+                self.assertEqual(run.call_args.args[0][0], str(binary))
+                binary.unlink()
+                run.reset_mock()
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    stack.compose(self.env, "ps")
+                run.assert_not_called()
 
     def test_sql_import_uses_schema_account(self):
         with patch.object(stack, "compose", return_value=SimpleNamespace(stdout=b"")) as compose:

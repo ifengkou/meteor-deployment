@@ -11,6 +11,7 @@ output_dir=${M6_IMAGE_OUTPUT_DIR:-$repo_root/dist/m6-amd64-images-$version}
 dockerhub_mirror=${M6_DOCKERHUB_MIRROR:-}
 mkdir -p "$output_dir"
 components=${M6_BUILD_COMPONENTS:-"ai metor mysql"}
+mysql_tag=${M6_MYSQL_IMAGE:-mysql:8.4}
 product_config=${LICENSE_PRODUCT_CONFIG:-license-build/license-product.json}
 for component in $components; do
   case "$component" in
@@ -74,7 +75,7 @@ for component in $components; do
     mysql)
       mysql_context=$(mktemp -d)
       printf 'FROM mysql:8.4\n' > "$mysql_context/Dockerfile"
-      build_archive mysql "$mysql_archive" mysql:8.4 "$mysql_context"
+      build_archive mysql "$mysql_archive" "$mysql_tag" "$mysql_context"
       rm -f "$mysql_context/Dockerfile"
       ;;
     *) echo "unsupported component: $component" >&2; exit 2 ;;

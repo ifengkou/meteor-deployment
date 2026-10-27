@@ -112,6 +112,21 @@ class InitializationTests(unittest.TestCase):
         self.assertNotIn("app.main", " ".join(command))
         self.assertEqual(command[-3:], ["check", "--root", "/run/icp-license"])
 
+    def test_fixed_tools_resolve_classic_config_digest_without_accepting_another_image(self):
+        configuration = "sha256:" + "b" * 64
+        entry = {"id": IMAGE, "configId": configuration, "reference": "reviewed:release",
+                 "os": "linux", "architecture": "amd64"}
+        (self.base / "manifest.json").write_text(json.dumps({"licenseToolsImage": IMAGE, "images": [entry]}))
+        actual = {"Id": configuration, "Os": "linux", "Architecture": "amd64"}
+        with patch.object(license_container.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps([actual]))) as run:
+            self.assertEqual(license_container.fixed_image(
+                {"AI_RUNTIME_IMAGE": "rollback:old"}, self.base / "deployment"), configuration)
+            self.assertEqual(run.call_args.args[0][-1], "reviewed:release")
+        for change in ({"Id": "sha256:" + "c" * 64}, {"Architecture": "arm64"}):
+            with patch.object(license_container.subprocess, "run", return_value=SimpleNamespace(stdout=json.dumps([{**actual, **change}]))):
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    license_container.fixed_image({}, self.base / "deployment")
+
     def test_probe_failure_precedes_target_creation(self):
         with patch.object(license_container, "fixed_image", return_value=IMAGE), \
              patch.object(license_container.LicenseTools, "operation", side_effect=ValueError("bad config")):

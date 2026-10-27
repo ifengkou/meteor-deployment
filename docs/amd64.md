@@ -111,6 +111,7 @@ icp-diag-amd64-release-20261016-1/
 │   ├── config/embedding-models.example.json
 │   └── docs/                   # 运维说明
 ├── images/full-stack.tar       # 含四个已核验 AMD64 镜像
+├── models/embedding/           # 完整 Embedding 配置、tokenizer、权重与模型 manifest
 ├── manifest.json               # 镜像 ID／平台、源码基线、SDK／公开配置摘要及工具镜像引用
 └── SHA256SUMS
 ```
@@ -144,16 +145,16 @@ LICENSE_TOOLS_IMAGE=sha256:<AI镜像完整64个十六进制字符的ID>
 
 ```bash
 python3 deployment/scripts/local-stack.py --env-file /absolute/build/amd64-export.env \
-  export /absolute/dist/icp-diag-amd64-release-20261016-1
-sh /absolute/dist/icp-diag-amd64-release-20261016-1/deployment/scripts/verify-bundle.sh \
-  /absolute/dist/icp-diag-amd64-release-20261016-1
+  export /absolute/dist/icp-diag-amd64-release-20261016-1.tar.gz
+# tar.gz 另附 .sha256，解压后再用包内 verify-bundle.sh 核验。
+# 完整命令见 customer-release/01-build.md。
 ```
 
 导出从镜像库读取实际 ID／平台，强制四镜像同一受支持 Linux 平台，并检查两后端实际 SDK 0.7.1 载荷、正式摘要、客户模式及同一公开配置字节。
 `METOR_PLATFORM=linux/amd64` 本身不能把 ARM64 镜像变成 AMD64，因此必须保留上面的实际架构检查。
-导出会在固定 AI 镜像中运行断网许可模块探测，不启动数据库或模型；制作环境必须能执行该目标架构。
+导出会在固定 AI 镜像中运行断网许可探测和 Embedding 加载／编码检查，不启动数据库或 Chat 服务；制作环境必须能执行该目标架构。
 自动复制完整新工具集、Compose 与文档，生成 `images/full-stack.tar`、`manifest.json` 和 `SHA256SUMS`。
-`manifest.licenseToolsImage` 引用包内 AI 不可变 ID，`manifest.licensing` 记录 SDK 版本、公开配置 SHA 和正式 SDK 制品摘要，目标机无须手选工具镜像。
+当前 export 默认从工作区 runtime/config/docker.env 取得获准数据库密码／JWT 及完整模型路径；可用 --credentials-env／--model-path 指定。Embedding 在本次 AI 镜像内断网实际加载后随包输出，manifest.formatVersion 为 2。`manifest.licenseToolsImage` 引用包内 AI 不可变 ID，`manifest.licensing` 记录 SDK 版本、公开配置 SHA 和正式 SDK 制品摘要，目标机无须手选工具镜像。
 
 ### 数量配置映射
 
@@ -161,11 +162,11 @@ sh /absolute/dist/icp-diag-amd64-release-20261016-1/deployment/scripts/verify-bu
 
 manifest 自动记录源码提交及工作区变更列表、镜像 tag／ID／平台和构建日期。JNI 库、模型制品及目标环境验收结果另存受控发行记录，不填写私有凭据或客户事件内容。
 导出后不要修改包内文件；文档或脚本有修正时，应重新导出到新目录并核验，不手工补文件或重写 manifest 冒充原包。
-目标机配置属于解包后的部署定制，应另行备份。制作机私有 env、业务数据、备份、客户安装资料和模型权重不进入通用包。
+目标机配置属于解包后的部署定制，应另行备份。源 env 不整体复制；只将三项数据库密码／JWT 与完整 Embedding 纳入私有交付包。业务数据、备份及客户安装资料仍不进入包。
 
 ## 4. 目标机统一目录
 
-将公共部署包放入 `/opt/icp-diag`。模型权重另行放入指定目录：
+校验 tar.gz 归档摘要后解压到 `/opt/icp-diag`，完整模型已在包内 models/embedding，无需另传。解压命令见[客户部署](customer-release/02-deploy.md)。目录如下：
 
 ```text
 /opt/icp-diag/
@@ -173,13 +174,13 @@ manifest 自动记录源码提交及工作区变更列表、镜像 tag／ID／�
 │   ├── config/embedding-models.example.json
 │   └── docs/
 ├── images/
+├── models/embedding/             # 包内完整只读模型
 ├── manifest.json
 ├── SHA256SUMS
 └── runtime/
     ├── config/
     │   ├── docker.env
     │   └── embedding/docker.json
-    ├── models/embedding/        # 完整 BGE 模型，只读挂载
     ├── data/
     │   ├── metor/              # 原始日志、报告和平台附件
     │   └── ai/{documents,chroma}/
@@ -193,7 +194,7 @@ manifest 自动记录源码提交及工作区变更列表、镜像 tag／ID／�
 | `runtime/data/metor` | `/data/metor` | Metor 可写，升级保留 |
 | `runtime/data/ai/documents` | `/data/ai/documents` | AI 可写，升级保留 |
 | `runtime/data/ai/chroma` | `/data/ai/chroma` | AI 可写，禁止两套实例同时写入 |
-| `runtime/models/embedding` | `/models/embedding` | 只读，宿主路径不能填进模型清单的 `modelPath` |
+| `models/embedding` | `/models/embedding` | 只读，宿主路径不能填进模型清单的 `modelPath` |
 | `runtime/config/embedding/docker.json` | `/config/embedding-models.json` | 只读单文件挂载，启动前文件必须存在 |
 | `runtime/logs/docker/ai`、`metor` | `/logs/ai`、`/logs/metor` | 各服务可写 |
 | `runtime/work/ai`、`metor` | `/work/ai`、`/work/metor` | 临时工作目录，升级不替换挂载 |
@@ -215,69 +216,18 @@ sh deployment/scripts/import-images.sh .
 任一步失败都停止后续安装，不以手工 `docker load` 绕过。确认包内四镜像均为 `linux/amd64`；
 配置使用 `pull_policy: never`，缺少镜像时会失败，不会替你从公网下载。
 
-### 5.2 生成私有配置
+### 5.2～5.3 准备配置、目录与数值权限
 
-先准备完整 Embedding 权重，至少不能只有 `config.json` 而没有权重和 tokenizer。确认模型目录后执行：
+当前 format 2 完整包在目标 Linux root 会话执行一条命令：
 
 ```bash
 cd /opt/icp-diag
-python3 deployment/scripts/local-stack.py --help
-python3 deployment/scripts/local-stack.py init \
-  --model-path /opt/icp-diag/runtime/models/embedding
+python3 deployment/scripts/prepare-runtime.py
 ```
 
-脚本生成 `runtime/config/docker.env`、数据库密码、JWT 密钥和 `runtime/config/embedding/docker.json`。Python 只使用标准库，无须安装业务依赖。脚本遇到已有 env 会拒绝覆盖，不要删除它来强行重新初始化。
+脚本核对镜像、模型和包内摘要，自动填写本次四镜像引用、AMD64 平台、宿主路径及模型清单；数据库密码与 JWT 直接复用包内获准值，不再随机生成或手工替换 p6-local。创建数据、日志、工作与备份目录，检查镜像 UID/GID 并落实权限，模型直接只读挂载 /opt/icp-diag/models/embedding。原 env 及已有非空目录不被强行覆盖；需要更新的已有安装按更新规程操作。
 
-编辑生成的 env，保留随机密码及数据库 URL，只修改或补充以下部署项：
-
-```dotenv
-WORKSPACE_RUNTIME_DIR=/opt/icp-diag/runtime
-METOR_PLATFORM=linux/amd64
-MYSQL_IMAGE=mysql:8.4
-AI_RUNTIME_IMAGE=ai-runtime-service:release-20261016-1
-METOR_IMAGE=metor-service:release-20261016-1
-FRONTEND_IMAGE=metor-platform-frontend:release-20261016-1
-LICENSE_ROOT=/opt/icp-diag/runtime/license
-
-AI_EMBEDDING_MODEL_HOST_PATH=/opt/icp-diag/runtime/models/embedding
-AI_EMBEDDING_MODELS_CONFIG_HOST_PATH=/opt/icp-diag/runtime/config/embedding/docker.json
-
-METOR_AEROSPACE_DECRYPTION_ENABLED=true
-METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES=20
-METOR_AEROSPACE_AI_ENABLED=false
-```
-
-上面不是完整 env，不可用它覆盖生成文件。航空 AI 初次关闭，待模型服务及六类业务场景配置完成后再开启。仅验证解密和解析时关闭 AI 不代表故障诊断最终成功。
-
-`WORKSPACE_RUNTIME_DIR` 会让包装脚本自动加载 `compose.shared-runtime.yaml`。脚本固定使用 `icp-diag-local` 项目名和 `metor_service` 业务库，目标机部署也沿用，不随意换项目名造成新卷。数据库另有 `metor_ai` 库，两库使用独立应用账号。
-
-### 5.3 创建挂载目录并授权
-
-```bash
-mkdir -p runtime/data/metor runtime/data/ai/documents runtime/data/ai/chroma
-mkdir -p runtime/logs/docker/ai runtime/logs/docker/metor
-mkdir -p runtime/work/ai runtime/work/metor runtime/backups
-chmod 0700 runtime/config runtime/backups
-chmod 0600 runtime/config/docker.env
-chmod 0755 runtime/config/embedding
-chmod 0644 runtime/config/embedding/docker.json
-
-docker run --rm --entrypoint id metor-service:release-20261016-1
-docker run --rm --entrypoint id ai-runtime-service:release-20261016-1
-```
-
-从实际镜像读取 UID/GID，再授权各自目录，不硬编码某台机器的账户编号：
-
-```bash
-metor_owner="$(docker run --rm --entrypoint sh metor-service:release-20261016-1 -c 'printf "%s:%s" "$(id -u)" "$(id -g)"')"
-ai_owner="$(docker run --rm --entrypoint sh ai-runtime-service:release-20261016-1 -c 'printf "%s:%s" "$(id -u)" "$(id -g)"')"
-
-sudo chown -R "$metor_owner" runtime/data/metor runtime/logs/docker/metor runtime/work/metor
-sudo chown -R "$ai_owner" runtime/data/ai runtime/logs/docker/ai runtime/work/ai
-chmod -R a+rX runtime/models/embedding
-```
-
-这组授权针对首次部署的指定目录，不对 `/opt/icp-diag` 整体递归改属主，也不使用 `chmod 777`。模型权重须为完整实际目录；若包含软链接，确认链接目标也随模型制品可访问。启用 SELinux 的发行版还需按主机策略配置挂载标签，不通过关闭安全策略解决访问失败。
+细节和失败处理见[首次部署](customer-release/02-deploy.md)。航空 AI 默认关闭，Chat／六场景准备并验证后再开启；实际 DAT 解密及原生 AMD64 业务验收仍是必需步骤。旧格式包和源码开发 init 不作为这次完整包安装入口。
 
 ### 5.4 由 SDK 初始化授权资料
 
@@ -317,11 +267,11 @@ python3 deployment/scripts/local-stack.py compose ps
 
 从旧环境迁入时，先采用[备份恢复流程](backup-restore.md)在空库及空文件目录恢复，不把上述空环境启动当作数据迁移。跨架构迁移使用逻辑 SQL 备份和文件备份，不复制正在运行的 MySQL 物理数据目录。恢复配置中的 ARM64 tag、制作机路径也必须换成目标值。
 
-默认入口均绑定主机回环地址：
+前端默认允许局域网访问，其余服务的宿主入口绑定回环地址：
 
 | 服务 | 宿主端口 | 容器间地址 |
 |---|---|---|
-| 前端 | `127.0.0.1:18180` | `frontend:8080` |
+| 前端 | `0.0.0.0:18180`，浏览器使用宿主机 IP | `frontend:8080` |
 | Metor | `127.0.0.1:18080` | `metor:8080` |
 | AI | `127.0.0.1:18092` | `ai-runtime:8090` |
 | MySQL | `127.0.0.1:13306`，共享配置启用 | `mysql:3306` |
@@ -332,13 +282,13 @@ curl --fail http://127.0.0.1:18080/actuator/health/readiness
 curl --fail http://127.0.0.1:18092/internal/health/ready
 ```
 
-首次远程测试可从操作电脑建立 SSH 隧道：
+局域网浏览器可访问 `http://主机IP:18180`，并在主机防火墙／云安全组允许客户端来源访问。也可从操作电脑建立 SSH 隧道：
 
 ```bash
 ssh -N -L 18180:127.0.0.1:18180 operator@linux-host
 ```
 
-浏览器访问操作电脑的 `http://127.0.0.1:18180`。正式对外提供入口时使用受控反向代理和 TLS，不直接开放 MySQL／AI 管理端口。前端当前绑定地址在 Compose 中写为 `127.0.0.1`，不存在只加 env 就能修改它的前端绑定变量。
+使用隧道时，浏览器访问操作电脑的 `http://127.0.0.1:18180`。需要域名／TLS 时配置受控反向代理，不直接开放 MySQL／AI 管理端口。前端绑定地址在 Compose 中为 `0.0.0.0`，发布端口由 `FRONTEND_EXPOSED_PORT` 配置。
 
 ## 7. JNI 与业务验收
 

@@ -13,7 +13,9 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 
+import customer_bundle
 import license_backup
 import license_container
 from datetime import datetime, timezone
@@ -36,8 +38,14 @@ RUNTIME_ROOT = WORKSPACE / "runtime" if WORKSPACE else AI_ROOT / "runtime"
 DEFAULT_ENV = RUNTIME_ROOT / "config/docker.env"
 DEFAULT_CATALOG = DEPLOYMENT / "config/embedding-models.example.json"
 PROJECT = "icp-diag-local"
-ALLOWED_PROJECTS = ("icp-diag-local", "icp-diag-local-restore-check")
+def project_name(value):
+    if not isinstance(value, str) or len(value) > 63 or re.fullmatch(r"icp-diag-[a-z0-9]+(?:-[a-z0-9]+)*", value) is None:
+        raise ValueError("unsupported deployment project; use an icp-diag- name with lowercase letters/digits")
+    return value
+
+
 FILES = ["compose.ai.yaml", "compose.metor.yaml", "compose.full-local.yaml"]
+CUSTOMER_DOCUMENTS = ("README.md", "install.md", "license.md", "operations.md", "business-config.md")
 
 
 def file_sha256(path):
@@ -53,21 +61,11 @@ def run(command, **kwargs):
 
 
 def read_env(path):
-    result = {}
-    for raw in path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, value = line.removeprefix("export ").split("=", 1)
-        # Parse quotes without executing shell code or expanding secrets.
-        values = shlex.split(value, comments=True)
-        result[key.strip()] = values[0] if values else ""
-    return result
+    return customer_bundle.read_env(path)
 
 
 def compose(env_file, *args, **kwargs):
-    if PROJECT not in ALLOWED_PROJECTS:
-        raise ValueError("unsupported local deployment project")
+    project_name(PROJECT)
     if not env_file.is_file():
         raise ValueError("run init before using the local stack")
     if env_file.stat().st_mode & 0o077:
@@ -75,7 +73,13 @@ def compose(env_file, *args, **kwargs):
     config = read_env(env_file)
     if config.get("METOR_DATABASE") != "metor_service":
         raise ValueError("local stack only accepts target database metor_service")
-    command = ["docker", "compose", "-p", PROJECT, "--env-file", str(env_file)]
+    command = ["docker", "compose"]
+    manifest_path = DEPLOYMENT.parent / "manifest.json"
+    if WORKSPACE is None and manifest_path.is_file():
+        bundled = json.loads(manifest_path.read_text()).get("compose")
+        if bundled is not None:
+            command = [str(customer_bundle.verify_compose(DEPLOYMENT.parent, bundled))]
+    command += ["-p", PROJECT, "--env-file", str(env_file)]
     files = [*FILES]
     if config.get("WORKSPACE_RUNTIME_DIR"):
         files.append("compose.shared-runtime.yaml")
@@ -420,7 +424,11 @@ def backup_stack(args):
             if path.is_file():
                 os.chmod(path, 0o600)
         if writers and not getattr(args, "keep_stopped", False):
-            compose(args.env_file, "start", *reversed(writers))
+            # ai-migrate is normally run with --rm. `compose start` resolves that
+            # missing dependency even when restarting existing application containers.
+            # Keep the existing container configuration and resume only prior writers.
+            for service in reversed(writers):
+                compose(args.env_file, "up", "-d", "--no-deps", "--no-recreate", "--wait", service)
     print(f"Consistent target stack backup created: {target}")
 
 
@@ -473,9 +481,9 @@ def restore_stack(args):
     if not required.issubset(covered):
         raise ValueError("backup checksum list does not cover all required recovery files")
     manifest = json.loads((backup / "backup-manifest.json").read_text())
+    project_name(manifest.get("project"))
     if (
         manifest.get("formatVersion") != 1
-        or manifest.get("project") not in ALLOWED_PROJECTS
         or set(manifest.get("databases", [])) != {"metor_service", "metor_ai"}
     ):
         raise ValueError("unsupported full-stack backup manifest")
@@ -615,6 +623,30 @@ def build(args):
 
 
 def export_bundle(args):
+    output = args.output.absolute()
+    if not output.name.endswith(".tar.gz"):
+        return export_directory(args)
+    checksum = output.with_name(output.name + ".sha256")
+    if output.exists() or output.is_symlink() or checksum.exists() or checksum.is_symlink():
+        raise FileExistsError("release archive/checksum already exists")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".icp-release-", dir=output.parent) as stage:
+        target = Path(stage) / output.name[:-7]
+        directory_args = argparse.Namespace(**{**vars(args), "output": target})
+        export_directory(directory_args)
+        fd = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            with os.fdopen(fd, "wb") as stream, tarfile.open(
+                    fileobj=stream, mode="w:gz", compresslevel=1) as archive:
+                archive.add(target, arcname=target.name)
+            checksum.write_text(f"{file_sha256(output)}  {output.name}\n")
+        except BaseException:
+            output.unlink()
+            raise
+    print(f"Private customer release archive created: {output}")
+
+
+def export_directory(args):
     import license_artifacts
 
     if WORKSPACE is None:
@@ -623,6 +655,13 @@ def export_bundle(args):
     if target.exists():
         raise FileExistsError(target)
     config = read_env(args.env_file)
+    source_env = getattr(args, "credentials_env", None) or DEFAULT_ENV
+    private = customer_bundle.credentials(source_env)
+    model_source = getattr(args, "model_path", None) or customer_bundle.read_env(source_env).get(
+        "AI_EMBEDDING_MODEL_HOST_PATH", "")
+    if not model_source or not Path(model_source).is_absolute():
+        raise ValueError("export requires the complete embedding model absolute path")
+    customer_bundle.validate_model(model_source)
     images = [
         config[key] for key in ("MYSQL_IMAGE", "AI_RUNTIME_IMAGE", "METOR_IMAGE", "FRONTEND_IMAGE")
     ]
@@ -641,27 +680,45 @@ def export_bundle(args):
     )
     if tools.probe["product_config_sha256"] != licensing["productConfigSha256"]:
         raise ValueError("license tools and business images use different public configurations")
-    target.mkdir(parents=True)
-    # Include only portable deployment inputs, never private envs, backups or host data.
+    target.mkdir(parents=True, mode=0o700)
+    # Include only the explicitly approved credential keys, never the source env,
+    # customer license state, business data or backups.
     package_deployment = target / "deployment"
     package_deployment.mkdir()
-    for name in [*FILES, "compose.shared-runtime.yaml", "compose.license-host.yaml",
-                 ".env.full-local.example", "README.md"]:
+    for name in [*FILES, "compose.shared-runtime.yaml", "compose.license-host.yaml"]:
         shutil.copy2(DEPLOYMENT / name, package_deployment / name)
+    (package_deployment / "README.md").write_text(
+        "# ICP Diag 客户部署包\n\n请从[客户使用指南](docs/README.md)开始，按顺序完成安装、授权和业务配置。\n"
+    )
     shutil.copytree(DEPLOYMENT / "mysql-init", package_deployment / "mysql-init")
-    shutil.copytree(DEPLOYMENT / "migrations", package_deployment / "migrations")
+    shutil.copytree(DEPLOYMENT / "migrations", package_deployment / "migrations",
+                    ignore=shutil.ignore_patterns("*.md"))
     (package_deployment / "scripts").mkdir()
     shutil.copy2(Path(__file__), package_deployment / "scripts/local-stack.py")
     shutil.copy2(DEPLOYMENT / "scripts/license_init.py",
                  package_deployment / "scripts/license_init.py")
-    for name in ("license_backup.py", "license_files.py", "license_container.py", "license_artifacts.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
+    for name in ("license_backup.py", "license_files.py", "license_container.py", "license_artifacts.py", "customer_bundle.py", "prepare-runtime.py", "ai631-rules.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
         shutil.copy2(DEPLOYMENT / "scripts" / name, package_deployment / "scripts" / name)
     catalog_path = package_deployment / "config/embedding-models.example.json"
     catalog_path.parent.mkdir(parents=True)
     shutil.copy2(DEFAULT_CATALOG, catalog_path)
+    customer_bundle.write_env(target / customer_bundle.CREDENTIAL_PATH, private)
+    (target / "models").mkdir()
+    model = customer_bundle.package_model(Path(model_source), target / customer_bundle.MODEL_PATH,
+                                          image_records[1]["Id"], run)
     (target / "images").mkdir()
     run(["docker", "save", "--output", str(target / "images/full-stack.tar"), *images])
-    shutil.copytree(DEPLOYMENT / "docs", package_deployment / "docs")
+    (package_deployment / "docs").mkdir()
+    for name in CUSTOMER_DOCUMENTS:
+        shutil.copy2(DEPLOYMENT / "customer-docs" / name, package_deployment / "docs" / name)
+    bundled_compose = None
+    if next(iter(platforms)) == ("linux", "amd64"):
+        bundled_compose = customer_bundle.package_compose(
+            WORKSPACE / "sdk-download/docker-compose-linux-x86_64",
+            target / customer_bundle.COMPOSE_PATH,
+        )
+        shutil.copy2(DEPLOYMENT / "third-party/docker-compose-LICENSE",
+                     package_deployment / "bin/docker-compose-LICENSE")
     repos = {}
     for name in ("frontend", "ai-runtime-service", "metor-service", "deployment"):
         repos[name] = {
@@ -677,7 +734,7 @@ def export_bundle(args):
             ).stdout.splitlines(),
         }
     manifest = {
-        "formatVersion": 1,
+        "formatVersion": 2,
         "project": PROJECT,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "images": [
@@ -692,10 +749,16 @@ def export_bundle(args):
         "licenseToolsImage": tools.image,
         "licensing": licensing,
         "repos": repos,
-        "includesCredentials": False,
+        "includesCredentials": True,
         "includesBusinessData": False,
-        "includesModelWeights": False,
+        "includesModelWeights": True,
+        "embeddingModel": model,
     }
+    configurations = license_artifacts.archive_config_ids(target / "images/full-stack.tar", manifest["images"])
+    if bundled_compose is not None:
+        manifest["compose"] = bundled_compose
+    for entry in manifest["images"]:
+        entry["configId"] = configurations[entry["reference"]]
     (target / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     (target / "SHA256SUMS").write_text(
         "".join(
@@ -781,7 +844,7 @@ def switch_mode(args):
 def main():
     global PROJECT
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", choices=ALLOWED_PROJECTS, default=PROJECT)
+    parser.add_argument("--project", type=project_name, default=PROJECT)
     parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV)
     commands = parser.add_subparsers(dest="command", required=True)
     license_create = commands.add_parser("license-init",
@@ -818,6 +881,10 @@ def main():
     image_build.add_argument("--service", choices=("ai", "metor", "frontend"), action="append")
     export = commands.add_parser("export")
     export.add_argument("output", type=Path)
+    export.add_argument("--credentials-env", type=Path, default=DEFAULT_ENV,
+                        help="Source of the approved database passwords and JWT; defaults to runtime/config/docker.env")
+    export.add_argument("--model-path", type=Path,
+                        help="Complete embedding model; defaults to credentials env model path")
     sql_cli = commands.add_parser("mysql")
     sql_cli.add_argument("account", nargs="?", choices=("root", "ai", "metor"), default="root")
     mode = commands.add_parser("mode")

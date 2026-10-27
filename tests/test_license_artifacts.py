@@ -1,8 +1,10 @@
 """Reject altered release binaries and mixed/development customer resources."""
 
 import hashlib
+import io
 import json
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -129,6 +131,24 @@ class LicenseArtifactTests(unittest.TestCase):
         for relative in ("../secret.json", "/etc/secret.json", "app/license-product.json"):
             with self.subTest(relative=relative), self.assertRaises(ValueError):
                 artifacts.verify_build_inputs(self.root, relative)
+
+    def test_saved_config_digest_is_portable_and_platform_checked(self):
+        path = self.root / "saved.tar"
+        raw = json.dumps({"os": "linux", "architecture": "amd64", "rootfs": {"diff_ids": []}}).encode()
+        with tarfile.open(path, "w") as archive:
+            for name, payload in (
+                ("config.json", raw),
+                ("manifest.json", json.dumps([{"Config": "config.json", "RepoTags": ["reviewed:release"]}]).encode()),
+            ):
+                entry = tarfile.TarInfo(name); entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload))
+        record = {"reference": "reviewed:release", "os": "linux", "architecture": "amd64"}
+        self.assertEqual(artifacts.archive_config_ids(path, [record]),
+                         {"reviewed:release": "sha256:" + hashlib.sha256(raw).hexdigest()})
+        with self.assertRaisesRegex(ValueError, "platform"):
+            artifacts.archive_config_ids(path, [{**record, "architecture": "arm64"}])
+        with self.assertRaisesRegex(ValueError, "cover"):
+            artifacts.archive_config_ids(path, [{**record, "reference": "other:release"}])
 
 
 if __name__ == "__main__":

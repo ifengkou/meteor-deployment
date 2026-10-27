@@ -41,7 +41,7 @@ services:
     environment:
       JAVA_UPSTREAM: metor:8080
     ports:
-      - 127.0.0.1:${FRONTEND_EXPOSED_PORT:-18180}:8080
+      - 0.0.0.0:${FRONTEND_EXPOSED_PORT:-18180}:8080
     read_only: true
     tmpfs:
       - /tmp

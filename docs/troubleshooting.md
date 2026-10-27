@@ -14,6 +14,7 @@
 | 出现 CUDA/NVIDIA 包 | 检查 `uv.lock`、wheelhouse 文件名和 `pip list` | 拒绝发布，重新生成 CPU-only 锁与 wheelhouse |
 | Chroma 损坏/丢失 | 确认 MySQL、原文档、模型 fingerprint 完整 | 恢复 Chroma 快照，或清空派生数据后运行重建脚本 |
 | metor 无法调用 AI | 容器内检查 `METOR_PLATFORM_AI_RUNTIME_BASE_URL` 和业务 `METOR_AEROSPACE_AI_BASE_URL` 是否为 `http://ai-runtime:8090` | 使用 Compose service name，不要使用 `127.0.0.1` |
+| 前端 API 返回 502，但 metor healthy | 比较 frontend 日志中的 upstream IP 与容器内 `getent hosts metor`；旧前端镜像可能仍缓存后端重建前的 IP | 临时执行 `python3 deployment/scripts/local-stack.py compose exec frontend sh -c 'nginx -t && nginx -s reload'`；更新到支持 Docker DNS 动态解析的前端镜像后，IP 变化将自动恢复。`/healthz` 仅检查前端存活 |
 
 收集诊断信息时可以保存 `docker compose ps`、最近 200 行日志、镜像 RepoDigest、Compose config 摘要和
 健康响应，但必须先脱敏；不要收集 `.env`、API Key、JWT secret、完整提示词或文档正文。

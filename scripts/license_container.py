@@ -10,23 +10,38 @@ import license_files
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 
 
+def resolve_image(entry):
+    expected = {entry["id"]}
+    if entry.get("configId"):
+        if IMAGE_ID.fullmatch(entry["configId"]) is None:
+            raise ValueError("invalid packaged image configuration digest")
+        expected.add(entry["configId"])
+    reference = entry.get("reference", entry["id"])
+    records = json.loads(subprocess.run(
+        ["docker", "image", "inspect", reference], check=True, capture_output=True, text=True,
+    ).stdout)
+    if (len(records) != 1 or records[0]["Id"] not in expected
+            or records[0]["Os"] != entry.get("os", "linux")
+            or entry.get("architecture") and records[0]["Architecture"] != entry["architecture"]):
+        raise ValueError("imported image reference/ID/platform differs from the manifest")
+    return records[0]["Id"]
+
+
 def fixed_image(config, deployment):
     manifest_path = deployment.parent / "manifest.json"
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text())
         image = manifest.get("licenseToolsImage")
-        if image not in {entry.get("id") for entry in manifest.get("images", [])}:
+        matches = [entry for entry in manifest.get("images", []) if entry.get("id") == image]
+        if len(matches) != 1:
             raise ValueError("bundle licenseToolsImage must reference a packaged image ID")
     else:
         image = os.environ.get("LICENSE_TOOLS_IMAGE", config.get("LICENSE_TOOLS_IMAGE", ""))
     if not isinstance(image, str) or IMAGE_ID.fullmatch(image) is None:
         raise ValueError("LICENSE_TOOLS_IMAGE must be the reviewed local SDK 0.7.1 AI image sha256 ID")
-    record = json.loads(subprocess.run(
-        ["docker", "image", "inspect", image], check=True, capture_output=True, text=True,
-    ).stdout)
-    if len(record) != 1 or record[0]["Id"] != image or record[0]["Os"] != "linux":
-        raise ValueError("license tools image is unavailable or does not match its fixed Linux ID")
-    return image
+    # Classic Docker uses the image config digest as Id; containerd may expose
+    # the manifest digest. Both digests are pinned to the saved release archive.
+    return resolve_image(matches[0] if manifest_path.is_file() else {"id": image})
 
 
 class LicenseTools:

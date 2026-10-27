@@ -9,29 +9,31 @@
 先按 [SDK 制作、安装与升级](license-sdk-upgrade.md) 准备正式 SDK 0.7.1 和同一份 Issuer 公开配置，完成客户构建和目标平台验收，再导出配置中选定的四个运行镜像。制作方私有 env 的 LICENSE_TOOLS_IMAGE 必须是本次 AI 镜像不可变 ID：
 
 ```bash
-python3 deployment/scripts/local-stack.py export /absolute/path/to/new-full-stack-bundle
+python3 deployment/scripts/local-stack.py export /absolute/path/to/new-full-stack-bundle.tar.gz
 ```
 
 此命令要求三个业务源码仓库与部署工程同级。它从本机 Docker 镜像库导出，不改变架构。当前 Mac 的 ARM64 运行镜像不能作为 AMD64 制品交付。
 
-包内包含四个镜像、部署 Compose、脚本、公共模型清单、发布文档、版本清单和 SHA-256。不包含凭据、数据库、业务文件或模型权重。目标机不需要 JDK、Node 或源码。
+当前 format 2 私有交付包包含四个镜像、完整 Embedding、部署资产、版本清单与 SHA-256，以及现有 runtime/config/docker.env 的三项数据库密码和 JWT 密钥。可直接输出 tar.gz 与归档 .sha256；不包含数据库、业务文件、授权身份或签发私钥。目标机不需要 JDK、Node 或源码。默认模型路径同样从源 docker.env 读取，也可用 --model-path 指定。
 
 ## AMD64 制作与安装
 
 跨架构构建、前端镜像补齐、部署包组装、`/opt/icp-diag` 目录和 JNI 验收统一见 [AMD64 操作步骤](amd64.md)。MySQL 保留 Docker 命名卷。
 
-新目标机提前准备 Docker Engine、Compose 2.24.4+、Python 3.9+、tar／gzip 和模型权重。部署包装脚本只使用 Python 标准库，不需要 pip 包。已有环境不重新运行 init，不覆盖私有配置。
+新目标机提前准备 Docker Engine、Compose 2.24.4+、Python 3.9+、tar／gzip；完整 Embedding 已在当前交付包内。部署包装脚本只使用 Python 标准库，不需要 pip 包。已有环境不运行首次准备或重新 init，不覆盖私有配置。
 
 使用 export 生成的同架构包时，先从包根目录校验，再导入：
 
 ```bash
 sh deployment/scripts/import-images.sh .
+# 首次安装：在目标 Linux root 会话中准备本次镜像、复用凭据、目录与数值权限。
+python3 deployment/scripts/prepare-runtime.py
 python3 deployment/scripts/local-stack.py compose config --quiet
 ```
 
-导入脚本先验证清单与固定 SDK 摘要，加载后核对镜像 reference、ID 和架构。最后一条要求已经按首次部署流程生成目标机 runtime/config/docker.env。没有私有配置时先生成配置，再在业务启动前执行 sudo python3 deployment/scripts/local-stack.py license-init。该操作调用包内固定镜像的 SDK，无网络、不启动数据库／模型，宿主不安装 SDK。已有客户按升级手册保留授权根，不重新初始化。随后 MySQL、AI 迁移、AI、Metor、前端按顺序启动。
+导入脚本先验证清单与固定 SDK 摘要，加载后核对镜像 reference、ID 和架构。tar.gz 的校验、解压、准备与启动完整步骤见[首次部署](customer-release/02-deploy.md)。首次安装不再运行随机生成凭据的 init；独立执行 license-init 后，按 MySQL、AI 迁移、AI、Metor、前端顺序启动。
 
-模型权重和获准业务备份通过受控介质另行传输。Chat 模型服务需由目标环境提供，不能将离线镜像加载等同于真实模型已可用。
+完整 Embedding 直接随包挂载，客户无需另行传输模型包。Chat 模型服务、场景及获准业务资料仍按[业务资料准备](customer-release/business-materials.md)落实；不能将镜像加载等同于真实 Chat 已可用。已有客户保留原 env 与授权根，按升级手册操作，不运行首次准备或重新初始化。
 
 ## 更新与恢复
 

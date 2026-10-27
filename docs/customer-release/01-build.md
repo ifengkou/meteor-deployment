@@ -28,6 +28,7 @@ PY
 | 正式 Python core wheel | `ai-runtime-service/wheelhouse/metor_license_core-0.7.1-py3-none-any.whl`，匹配 uv.lock 摘要 |
 | Issuer 公开配置 | 两端 `license-build/license-product.json`，同一原字节文件；来源为本次正式 Issuer |
 | 完整业务构建依赖 | Gradle／前端依赖、基础镜像；AI 离线构建还需匹配目标 Linux 架构与 Python 3.12 的完整 wheelhouse |
+| AMD64 专用 Compose | 工作区 `sdk-download/docker-compose-linux-x86_64`，官方 v2.33.0；导出器校验固定 SHA256，复制至包内 `deployment/bin/docker-compose-v2`，随附许可证 |
 
 制作方按[Java 输入](../../../metor-service/license-build/README.md)、[AI 输入](../../../ai-runtime-service/license-build/README.md)准备后检查：
 
@@ -88,22 +89,31 @@ docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
 LICENSE_TOOLS_IMAGE=sha256:<本次AI镜像的完整ID>
 ```
 
-组包环境必须可执行该平台 AI 镜像的断网探测，不需启动业务：
+组包环境必须可执行该平台 AI 镜像的断网探测与 Embedding 实际编码，不需启动业务。默认凭据及完整模型路径从工作区 `runtime/config/docker.env` 读取；只提取三项数据库密码与 JWT，不复制源 env 的其他配置。需要选择其他获准输入时使用 `--credentials-env` 和 `--model-path`。
 
 ```bash
 python3 deployment/scripts/local-stack.py \
   --env-file runtime/release/release-20261026-1/build.env \
-  export /absolute/dist/icp-diag-release-20261026-1-amd64
-sh /absolute/dist/icp-diag-release-20261026-1-amd64/deployment/scripts/verify-bundle.sh \
-  /absolute/dist/icp-diag-release-20261026-1-amd64
+  export /absolute/dist/icp-diag-release-20261026-1-amd64.tar.gz \
+  --credentials-env runtime/config/docker.env
+cd /absolute/dist
+sha256sum -c icp-diag-release-20261026-1-amd64.tar.gz.sha256
+mkdir -p /absolute/inspection
+tar -xzf icp-diag-release-20261026-1-amd64.tar.gz -C /absolute/inspection
+sh /absolute/inspection/icp-diag-release-20261026-1-amd64/deployment/scripts/verify-bundle.sh \
+  /absolute/inspection/icp-diag-release-20261026-1-amd64
 ```
 
-输出目录必须不存在。export 核对实际 SDK 载荷、客户模式、API 清单和两镜像公开配置一致性；manifest 保存四仓 HEAD／工作区变更、四镜像 ID／平台、SDK／配置摘要和固定工具镜像。
+归档及 `.sha256` 必须不存在；归档权限 0600。仍支持目录输出（目录权限 0700），推荐交付单个 tar.gz 加其摘要。失败不留下可误认成功的压缩包。
 
-**还要把镜像内摘要与本次预期输入对照**：两镜像相互一致不代表选中了正式配置；旧演示镜像也可能彼此一致。在源码根目录执行（参数为包目录）：
+formatVersion 2 的 manifest 保存四仓 HEAD／工作区变更、四镜像 ID／平台、SDK／公开配置摘要、固定工具镜像及 Embedding manifest 摘要与离线加载结果，并明确 includesCredentials／includesModelWeights 为 true。所有模型文件和包内私有配置均被 SHA256SUMS 覆盖。
+
+export 核对实际 SDK 载荷、客户模式、API 清单、两镜像公开配置一致性；模型会从实际归档暂存副本在本次 AI 镜像中断网加载并编码，缺少 tokenizer、真实权重、模型 manifest、维数不符或加载失败均不出包。包内不会包含业务数据、备份、安装主密钥、商业许可或签发私钥。
+
+**还要把镜像内摘要与本次预期输入对照**：两镜像相互一致不代表选中了正式配置；旧演示镜像也可能彼此一致。切回源码根目录执行（参数为解压后的包目录）：
 
 ```bash
-python3 - /absolute/dist/icp-diag-release-20261026-1-amd64 <<'PY'
+python3 - /absolute/inspection/icp-diag-release-20261026-1-amd64 <<'PY'
 import hashlib, json, subprocess, sys
 from pathlib import Path
 m = json.loads((Path(sys.argv[1]) / 'manifest.json').read_text())
@@ -120,4 +130,6 @@ print('正式公开配置及四仓基线核对通过')
 PY
 ```
 
-将同一包放到原生目标 Linux，按后续阶段完成验收，保存包 SHA、manifest 与验收结果。脚本或文档变化后重新冻结、导出、核验；不手工修改已核验包后沿用旧摘要。完整模型、业务配置和凭据按[独立清单](business-materials.md)准备。
+将同一包放到原生目标 Linux，按后续阶段完成验收，保存包 SHA、manifest 与验收结果。脚本或文档变化后重新冻结、导出、核验；不手工修改已核验包后沿用旧摘要。完整模型与获准凭据随包；Chat、场景及客户业务资料按[准备清单](business-materials.md)落实。
+
+客户包文档只导出 customer-docs/ 的五份使用指南，构建、收口和验证记录留在制作方工程；不再整目录复制 docs/。

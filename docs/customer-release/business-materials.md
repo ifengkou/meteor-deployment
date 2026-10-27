@@ -1,42 +1,16 @@
 # 另行准备的模型、业务资料与凭据
 
-本页与镜像制作并行执行。通用包明确不包含模型权重、业务数据和客户凭据；镜像加载成功不意味着这些资料已存在。由实施负责人维护客户专用清单，记录来源、版本／摘要、存放位置、配置映射及验收结果。
+本页与镜像制作并行执行。完整 Embedding、三项数据库密码与 JWT 现在纳入统一交付包；Chat 服务、场景、知识资料与客户业务数据仍需准备。由实施负责人记录来源、版本／摘要、配置映射及验收结果。
 
-## 1. Embedding 完整制品
+## 1. Embedding 完整制品随包
 
-默认使用 `bge-small-zh-v1.5`。我方制作人员从已批准的完整模型副本取得权重，记录上游模型标识／revision、配置、tokenizer、权重及全部运行所需文件；交付真实文件，不保留指向制作机缓存的悬空链接，不交付 Git LFS 指针当权重。
+默认使用已批准的 `bge-small-zh-v1.5` 完整目录；export 默认读取工作区 `runtime/config/docker.env` 的 `AI_EMBEDDING_MODEL_HOST_PATH`，也可用 `--model-path /absolute/model` 显式指定。目录须包含真实权重、模型配置、SentenceTransformer modules、tokenizer，以及现有 `model-manifest.json`（artifactName、dimension、来源 revision 及权重摘要等）；不能仅有 config.json、Git LFS 指针或指向制作机缓存的软链接。
 
-在一个独立 staging 目录内整理为 `model/`，其根下直接可见 `config.json`、权重、tokenizer 等文件。写入 `model-manifest.json` 记录模型 ID、来源 revision、归一化选择、制品日期和文件说明，再生成模型目录内的 SHA256SUMS。例如从 staging 根目录执行：
+export 复制全部文件到交付包的 `models/embedding/`，用本次固定 AI 镜像从该副本断网加载并编码中文，核对实际维数与模型 manifest。文件摘要进入全包 SHA256SUMS，模型 manifest 摘要与加载通过结果进入发行 manifest。无需为客户另外制作／导入模型压缩包。
 
-```bash
-python3 - <<'PY'
-from pathlib import Path
-import hashlib
-root = Path('model')
-files = sorted(p for p in root.rglob('*') if p.is_file() and p.name != 'SHA256SUMS')
-if not files or any(p.is_symlink() for p in root.rglob('*')):
-    raise SystemExit('请先准备完整、无软链接的模型文件')
-with (root / 'SHA256SUMS').open('x') as out:
-    for path in files:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        out.write(f'{digest}  {path.relative_to(root)}\n')
-PY
-tar -czf embedding-bge-small-zh-v1.5.tar.gz model
-sha256sum embedding-bge-small-zh-v1.5.tar.gz
-```
+客户解压统一包后只需运行 `prepare-runtime.py`，模型路径、只读权限和容器挂载清单自动就绪。AI 启动后 readiness 的 embeddingModel 应为 UP，再创建知识库、上传获准文本、等待索引成功并检索命中。
 
-目录已有 SHA256SUMS 时先核对来源，不覆盖它伪造新基线。打包前在匹配本次运行依赖的环境中，以离线方式真正加载模型与 tokenizer 并编码一段中文，记录实际向量维数和检索结果；仅检查 config.json 或文件列表不算加载通过。模型使用／再分发条件由制作方按取得渠道核对并随专用资料保留。
-
-客户将获准模型包和独立交接的归档摘要核对后，在 `/opt/icp-diag` 执行：
-
-```bash
-sh deployment/scripts/install-model.sh /absolute/embedding-bge-small-zh-v1.5.tar.gz \
-  /opt/icp-diag/runtime/models/embedding
-```
-
-目标目录必须不存在；脚本验证包内模型 manifest 和 SHA256SUMS，再将模型设为只读。运行时清单 `runtime/config/embedding/docker.json` 应使用稳定 ID `bge-small-zh-v1.5`、容器路径 `/models/embedding`，宿主路径通过 env 只读挂载。未准备的其他模型保持 disabled。
-
-AI 启动后 readiness 的 embeddingModel 应为 UP，再创建知识库、上传获准文本、等待索引成功并检索命中。更换模型权重、tokenizer、normalize 或模型身份时不能沿用不兼容旧向量；新建知识库重建索引后再切换场景绑定。
+模型使用／再分发条件由制作方随来源资料保留。更换权重、tokenizer、normalize 或模型身份时不能沿用不兼容旧向量；新建知识库重建索引后再切换场景绑定。模型、知识库内容和 Chat 模型是不同的交付资料。
 
 ## 2. Chat 模型服务
 
@@ -99,8 +73,8 @@ python3 deployment/scripts/local-stack.py compose exec -T mysql sh -c \
 
 ## 5. 账号、私有配置和交接
 
-数据库密码与 JWT 密钥由首次 init 随机生成，env 权限 0600；首管理员由授权人员先完成初始化，不设置通用默认客户口令。另行准备普通操作员、所需系统 API Key／scope、模型凭据、入口域名证书及其负责人。
+数据库密码与 JWT 密钥直接复用制作机现有 `runtime/config/docker.env` 对应值，由 export 提取四个允许字段，客户 prepare 脚本据此生成目标 env（0600），不重新随机生成；首管理员由授权人员先完成初始化，不设置通用默认客户口令。另行准备普通操作员、所需系统 API Key／scope、模型凭据、入口域名证书及其负责人。
 
-凭据通过客户约定的安全渠道交接，不放通用包、Git、发行 manifest、截图或验收日志。备份中的私有 env、数据库和安装主密钥也按敏感资料保护。
+已约定的数据库密码／JWT 随私有交付包交接；其他凭据按客户约定安全渠道交接，均不放 Git、发行 manifest、截图或验收日志。备份中的私有 env、数据库和安装主密钥也按敏感资料保护。
 
 客户专用清单逐项标明“我方交付／客户提供／本次不启用”、版本／摘要、路径或业务 ID、配置关系、完成日期和验收结果。最终保留与本次镜像兼容的模型副本、场景／规则清单、业务备份及恢复步骤。

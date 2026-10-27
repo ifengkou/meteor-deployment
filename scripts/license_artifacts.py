@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
@@ -130,6 +131,29 @@ def inspect_images(run, ai_image, metor_image, wheel):
             "productConfigSha256": sha256(raw), "mode": "CUSTOMER_REQUIRED"}
 
 
+def archive_config_ids(path, records):
+    """Hash the actual saved config bytes, the stable image identity in classic Docker."""
+    found = {}
+    with tarfile.open(path) as archive:
+        manifests = json.load(archive.extractfile("manifest.json"))
+        for entry in manifests:
+            member = archive.getmember(entry["Config"])
+            if not member.isfile() or member.size > 4 * 1024 * 1024:
+                raise ValueError("regular bounded image configuration required")
+            raw = archive.extractfile(member).read()
+            configuration = json.loads(raw)
+            for record in records:
+                if record["reference"] in (entry.get("RepoTags") or []):
+                    if record["reference"] in found or (
+                            configuration.get("os"), configuration.get("architecture")) != (
+                            record["os"], record["architecture"]):
+                        raise ValueError("duplicate image reference or wrong saved configuration platform")
+                    found[record["reference"]] = "sha256:" + sha256(raw)
+    if set(found) != {record["reference"] for record in records}:
+        raise ValueError("saved archive does not cover every release image configuration")
+    return found
+
+
 def verify_bundle(bundle, *, imported=False):
     bundle = Path(bundle)
     images = bundle / "images"
@@ -157,7 +181,7 @@ def verify_bundle(bundle, *, imported=False):
     if (not isinstance(licensing, dict) or not isinstance(records, list)
             or len(records) != 4 or any(not isinstance(entry, dict) for entry in records)):
         raise ValueError("bundle manifest requires licensing metadata and four image records")
-    if (manifest.get("formatVersion") != 1 or len(records) != 4
+    if (manifest.get("formatVersion") not in {1, 2} or len(records) != 4
             or licensing.get("sdkVersion") != SDK_VERSION
             or licensing.get("mode") != "CUSTOMER_REQUIRED"
             or licensing.get("releaseArtifactsSha256") != RELEASE_SHA256
@@ -170,17 +194,17 @@ def verify_bundle(bundle, *, imported=False):
     for entry in records:
         if re.fullmatch(r"sha256:[0-9a-f]{64}", str(entry.get("id"))) is None:
             raise ValueError("bundle requires immutable image IDs")
+        if "configId" in entry and re.fullmatch(r"sha256:[0-9a-f]{64}", str(entry["configId"])) is None:
+            raise ValueError("bundle requires immutable image configuration IDs")
+    if manifest["formatVersion"] == 2:
+        import customer_bundle
+
+        customer_bundle.verify_contents(bundle, manifest)
     if imported:
-        import subprocess
+        import license_container
 
         for entry in records:
-            actual = json.loads(subprocess.run(
-                ["docker", "image", "inspect", entry["reference"]],
-                check=True, capture_output=True, text=True,
-            ).stdout)
-            if len(actual) != 1 or (actual[0]["Id"], actual[0]["Os"], actual[0]["Architecture"]) != (
-                    entry["id"], entry["os"], entry["architecture"]):
-                raise ValueError("imported image reference/ID/platform differs from the manifest")
+            license_container.resolve_image(entry)
     return manifest
 
 

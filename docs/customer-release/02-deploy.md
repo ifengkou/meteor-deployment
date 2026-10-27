@@ -6,89 +6,56 @@
 
 ## 1. 主机和资料就绪
 
-准备匹配架构的 Docker Engine、Compose 2.24.4+、Python 3.9+、tar、gzip、sha256sum、curl；离线机提前准备这些宿主工具的发行版安装包与依赖。命令需要 Docker 权限，安装根目录操作需要相应系统权限。
+本次目标环境为 Docker Engine 24.0.7、Python 3.8.10，另需 tar、gzip、sha256sum、curl。AMD64 包固定携带 Compose v2.33.0，统一入口自动调用；系统 docker-compose 1.25.0 可保留，不另装 Python 3.12。命令需要 Docker 权限，安装根目录操作需要相应系统权限。
 
 ```bash
 uname -m
 docker version
-docker compose version
 python3 --version
 ```
 
 `uname -m` 应为 `x86_64`，包内四镜像应为 `linux/amd64`；若检测为 `aarch64`，停止本次安装并重新核对主机。当前 DAT JNI 制品为 AMD64。提前核对磁盘、内存、模型推理容量、时钟同步、域名、证书与业务访问网络。
 
-将完整公共包解包到 `/opt/icp-diag`，根下直接包含 `deployment/`、`images/`、`manifest.json` 和 `SHA256SUMS`。在业务启动前按[资料准备](business-materials.md)放好完整 Embedding 权重；Chat／业务配置可在授权开通后从平台配置。
+本次交付为一个包含四镜像、完整 Embedding、部署资产和约定凭据的私有 `tar.gz`，另附归档 `.sha256`。Chat 服务和业务配置仍按[资料准备](business-materials.md)落实。
 
-## 2. 校验包、导入镜像
+以下在客户 Linux 的 root 运维会话执行（可先用 `sudo -i` 进入），仅用于全新安装；目标目录已有部署时停止，走更新流程。
+
+## 2. 校验归档、解压并导入镜像
 
 ```bash
+cd /absolute/transfer
+sha256sum -c icp-diag-linux-amd64-candidate-20261027-1.tar.gz.sha256
+mkdir -p /opt/icp-diag
+tar --no-same-owner -xzf icp-diag-linux-amd64-candidate-20261027-1.tar.gz \
+  -C /opt/icp-diag --strip-components=1
 cd /opt/icp-diag
-sh deployment/scripts/verify-bundle.sh .
 sh deployment/scripts/import-images.sh .
 ```
 
-脚本先验包，加载后核对镜像 reference、ID 和平台。失败即停止，不手工改 manifest 绕过。此时不需 SDK 初始化，也不需数据库或模型服务在线。
+包内根下包含 `deployment/`、`images/`、`models/embedding/`、`manifest.json` 和 `SHA256SUMS`。导入脚本先验包，再加载并核对实际镜像 ID 和架构；缺件、摘要或架构不符时停止。镜像导入不需要授权、数据库或 Chat 服务在线。
 
-## 3. 生成并核对私有配置
-
-确认完整权重放在 `/opt/icp-diag/runtime/models/embedding` 后：
+## 3. 一条命令准备配置、目录和权限
 
 ```bash
-python3 deployment/scripts/local-stack.py init \
-  --model-path /opt/icp-diag/runtime/models/embedding
+python3 deployment/scripts/prepare-runtime.py
 ```
 
-生成 `runtime/config/docker.env`（0600）和 `runtime/config/embedding/docker.json`。已有 env 会拒绝覆盖；不要删除已有配置强行重试。`init` 只检查模型 `config.json` 存在，不能证明权重完整。
+此脚本仅在目标 Linux 以 root 运行，默认安装根为脚本所在交付包的根目录，执行以下工作：
 
-**启动前编辑生成的 env，保留随机密码和 AI_DB_URL**。下面是需要核对的条目，不是完整文件，镜像引用与平台以本包 manifest 为准：
+- 校验完整包、模型文件和已导入镜像，拒绝与目标机原生架构不同的包；检查实际 Metor UID/GID 为 21001、AI 为 21002。
+- 从 manifest 自动填写本次四镜像引用及 `linux/amd64`，不再手工替换 `p6-local`。
+- 从包内 `deployment/config/customer.env` 原样复用制作机 `runtime/config/docker.env` 中的 MYSQL_ROOT_PASSWORD、AI_DB_PASSWORD、METOR_DB_PASSWORD 和 JWT 密钥，生成 `runtime/config/docker.env`（0600）。AI_DB_URL 自动按实际密码进行 URL 编码。
+- 自动填写目标机运行目录、授权根与模型路径；Embedding 直接只读挂载包内 `/opt/icp-diag/models/embedding`，无需另传模型包或复制权重。
+- 创建业务数据、日志、工作和备份目录，设置指定目录数值 owner／mode；模型文件设为只读。不会递归改已有业务文件的 owner，不使用 chmod 777。
+- 创建容器路径为 `/models/embedding` 的模型清单。默认开启 AMD64 解密，航空 AI 保持关闭，待模型服务和六场景配置完成后开启。
 
-```dotenv
-WORKSPACE_RUNTIME_DIR=/opt/icp-diag/runtime
-MYSQL_IMAGE=mysql:8.4
-AI_RUNTIME_IMAGE=ai-runtime-service:release-20261026-1
-METOR_IMAGE=metor-service:release-20261026-1
-FRONTEND_IMAGE=metor-platform-frontend:release-20261026-1
-METOR_PLATFORM=linux/amd64
-LICENSE_ROOT=/opt/icp-diag/runtime/license
-LICENSE_MACHINE_ID_PATH=/etc/machine-id
-AI_EMBEDDING_MODEL_HOST_PATH=/opt/icp-diag/runtime/models/embedding
-AI_EMBEDDING_MODELS_CONFIG_HOST_PATH=/opt/icp-diag/runtime/config/embedding/docker.json
-METOR_AEROSPACE_DECRYPTION_ENABLED=true
-METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES=20
-METOR_AEROSPACE_AI_ENABLED=false
-```
+相同配置下可重复执行；已有不同配置、非空目录属主不符或路径含软链接时拒绝覆盖。配置之后如经人工调整，不再用准备脚本重置它，按更新流程维护。源 env 不会整体进入交付包，不包含制作机路径、旧镜像、客户安装身份或签发私钥。
 
-`init` 仍写历史 `p6-local` 应用 tag，必须替换；不要把上述示例 tag 当作已存在的镜像。本次保留 `METOR_PLATFORM=linux/amd64` 并开启解密，完成真实 DAT 验收。航空 AI 先关闭，六场景准备完成后再开启；关闭 AI 不是最终业务验收通过。
+包内凭据与发行清单固定，采用客户约定的受控渠道交付，归档权限 0600、导出目录 0700；不提交 Git、不公开分发。生成的 env 是 Compose 格式，脚本负责特殊字符转义，不通过 shell `source` 加载。人工更改值时保留正确引号。
 
-便携包自动读取 manifest 中的固定 AI 工具镜像，无须设置 LICENSE_TOOLS_IMAGE；源码安装才需要显式填写完整不可变 AI 镜像 ID。配置中不得有与包内工具 ID 冲突的旧值。
+便携包自动使用 manifest 中的固定 AI 工具镜像，无须另设 LICENSE_TOOLS_IMAGE。授权根仍为 `/opt/icp-diag/runtime/license`，下一步显式初始化。还需由客户确认真实、稳定的 `/etc/machine-id` 与 SELinux 挂载策略；准备脚本不造机器标识、不修改防火墙。
 
-核对目标机存在稳定的真实 machine-id；缺失时由客户系统管理流程处理，不能造一个临时文件冒充。HOST_INSTALL 许可绑定最终宿主与安装身份；迁机或重建安装前先规划授权处理。
-
-## 4. 创建目录、落实数值权限
-
-以下只操作全新安装的指定目录：
-
-```bash
-mkdir -p runtime/data/metor runtime/data/ai/documents runtime/data/ai/chroma
-mkdir -p runtime/logs/docker/metor runtime/logs/docker/ai
-mkdir -p runtime/work/metor runtime/work/ai runtime/backups
-chmod 0700 runtime/config runtime/backups
-chmod 0600 runtime/config/docker.env
-chmod 0755 runtime/config/embedding
-chmod 0644 runtime/config/embedding/docker.json
-```
-
-使用 manifest 中的实际镜像 tag 检查 `docker run --rm --pull=never --network=none --entrypoint id <镜像>`。当前 Metor 为 `21001:21001`，AI 为 `21002:21002`，共同许可组 `21000`。确认一致后：
-
-```bash
-sudo chown -R 21001:21001 runtime/data/metor runtime/logs/docker/metor runtime/work/metor
-sudo chown -R 21002:21002 runtime/data/ai runtime/logs/docker/ai runtime/work/ai
-chmod -R a+rX runtime/models/embedding
-```
-
-模型需可遍历、可读；不要对整个安装目录递归改 owner 或使用 chmod 777。SELinux 主机落实对应挂载策略。已有数据目录须先备份并单独核对，不能套用首次目录授权当作迁移工具。
-
-## 5. 单独初始化授权
+## 4. 单独初始化授权
 
 确认所有本安装 Metor／AI、源码进程与旧初始化任务都已停止：
 
@@ -103,7 +70,7 @@ sudo python3 deployment/scripts/local-stack.py \
 
 失败保留现场。`OUTCOME_UNKNOWN` 需停写后用同命令核对重试；已完成身份缺件或损坏时不靠删除目录重建，按[备份恢复](../backup-restore.md)处理。
 
-## 6. 迁移并按顺序启动
+## 5. 迁移并按顺序启动
 
 ```bash
 python3 deployment/scripts/local-stack.py compose config --quiet
@@ -122,9 +89,9 @@ curl --fail http://127.0.0.1:18092/internal/health/ready
 
 项目名沿用 `icp-diag-local`；MySQL 使用该项目命名卷，两个库为 `metor_service`／`metor_ai`。已有卷不重放初始化 SQL，修改 env 密码不自动修改已有数据库账户。不要 `down -v` 或重建数据卷。
 
-## 7. 客户访问入口与首管理员
+## 6. 客户访问入口与首管理员
 
-默认前端固定监听 `127.0.0.1:18180`，没有前端绑定地址 env。首次实施可在操作电脑运行：
+默认前端监听 `0.0.0.0:18180`，局域网浏览器可使用客户主机 IP 访问；防火墙／安全组允许实际客户端来源。也可在操作电脑运行 SSH 隧道：
 
 ```bash
 ssh -N -L 18180:127.0.0.1:18180 operator@customer-host
@@ -132,7 +99,7 @@ ssh -N -L 18180:127.0.0.1:18180 operator@customer-host
 
 浏览器访问 `http://127.0.0.1:18180`。全新空用户库的第一次有效登录会创建首管理员；由授权实施人员先在受控入口完成，使用客户约定的强口令，再开放业务入口。已有库使用原管理员，无默认客户密码。
 
-正式局域网访问采用**同宿主反向代理**：客户域名／TLS 入口转发到 `http://127.0.0.1:18180`，统一代理页面与 API；验收上传限制、长任务超时、路径和登录行为。远端代理不能直接访问客户机的回环端口，需要另外评审入口绑定与防火墙方案，不能只改 FRONTEND_EXPOSED_PORT。
+需要客户域名／TLS 时配置反向代理，统一代理页面与 API，并验收上传限制、长任务超时、路径和登录行为。同宿主代理可转发到 `http://127.0.0.1:18180`，远端代理使用客户主机 IP，并落实对应防火墙来源规则。发布端口由 FRONTEND_EXPOSED_PORT 配置。
 
 Metor、AI 和 MySQL 保持本机维护端口，不为浏览器单独开放。入口方案、域名、证书续期负责人写入发行记录。
 

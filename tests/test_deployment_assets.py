@@ -60,7 +60,7 @@ def test_runbooks_and_bundle_contract_exist() -> None:
     bundle_script = read(DEPLOYMENT / "scripts/local-stack.py")
     assert '"docker", "save"' in bundle_script
     assert "SHA256SUMS" in bundle_script
-    assert 'DEPLOYMENT / "docs"' in bundle_script
+    assert 'DEPLOYMENT / "customer-docs"' in bundle_script
 
 
 def test_docker_archive_platform_validation(tmp_path: Path) -> None:

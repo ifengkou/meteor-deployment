@@ -49,7 +49,7 @@ sh deployment/scripts/verify-bundle.sh /absolute/new-customer-bundle
 
 export 要求四个镜像同属 Linux amd64 或 arm64，核验 AI 实际安装的 SDK 每个文件与正式 wheel 一致、BootJar 只有正式 core JAR、两端固定客户模式、API 清单摘要正确，以及公开配置原字节相同。manifest.json 的 licensing 记录 SDK 版本、正式制品摘要和公开配置 SHA256；images 记录镜像 ID／平台；licenseToolsImage 固定引用本包 AI 镜像。源码 HEAD 及未提交变更列表另记在 repos。正式交付前仍需发布提交并记录目标 Linux 验收。
 
-包内没有源码、Issuer、签发私钥、口令、客户身份、商业许可、业务数据或模型权重。不要手抄旧版复制清单组装新包，以免遗漏 SDK 工具或 manifest。客户包校验和只能检测传输损坏；交付介质和清单来源仍须受控。
+当前 format 2 包含完整 Embedding，以及按用户约定从现有 docker.env 提取的数据库密码和 JWT；包内没有源码、Issuer、签发私钥及其口令、客户安装身份、商业许可或业务数据。不要手抄旧版复制清单组装新包，以免遗漏 SDK 工具或 manifest。客户包校验和只能检测传输损坏；交付介质和清单来源仍须受控。
 
 ## 客户：首次安装
 
@@ -59,13 +59,11 @@ export 要求四个镜像同属 Linux amd64 或 arm64，核验 AI 实际安装�
 # 先验证并加载全部镜像；此时无需业务服务运行。
 sh deployment/scripts/import-images.sh .
 
-# 仅首次生成业务私有配置；替换模型绝对路径。
-python3 deployment/scripts/local-stack.py init --model-path /absolute/models/embedding
+# 当前 format 2 完整包：在目标 Linux root 会话中复用包内凭据并准备目录权限。
+python3 deployment/scripts/prepare-runtime.py
 ```
 
-核对 runtime/config/docker.env 的镜像 tag、METOR_PLATFORM、LICENSE_ROOT 和真实模型路径。新包自动使用 manifest 中的固定工具镜像；源码部署需要显式填写 LICENSE_TOOLS_IMAGE。machine-id 只挂载实际宿主文件，不生成替代标识。
-
-`init` 仍生成历史 `p6-local` 应用 tag，不会从 manifest 自动选择业务镜像。必须先按[首次部署](customer-release/02-deploy.md)将三个应用镜像与 MySQL 引用、平台替换成 manifest 中的实际值，并配置宿主目录与权限，再初始化授权和启动。
+当前完整包自动从 manifest 选定四镜像和平台，模型随包，密码／JWT 从制作方现有配置复用；客户不再手工替换 p6-local 或重新生成随机口令。配置和授权根详见[首次部署](customer-release/02-deploy.md)。已有旧 format 1 包保留其原始校验与安装规程，不用新准备脚本覆盖既有配置。
 
 ```bash
 # 新环境尚未启动业务。若有旧安装任务或源码服务，先全部停止。

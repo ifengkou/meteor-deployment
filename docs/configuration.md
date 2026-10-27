@@ -44,7 +44,7 @@ Metor `.env.local` 保留为共享源码配置的链接。旧阶段配置和独�
 
 | 用途 | 宿主入口 | 容器间地址 |
 |---|---|---|
-| 页面 | `127.0.0.1:18180` | `frontend:8080` |
+| 页面 | `0.0.0.0:18180`，浏览器使用宿主机 IP | `frontend:8080` |
 | Metor | `127.0.0.1:18080` | `metor:8080` |
 | AI Runtime | `127.0.0.1:18092` | `ai-runtime:8090` |
 | MySQL | `127.0.0.1:13306` | `mysql:3306`；业务库 `metor_service`、AI 库 `metor_ai`，各用独立账号 |
@@ -72,4 +72,4 @@ AI 在宿主运行时可用 `http://127.0.0.1:11434` 访问宿主 Ollama；在 D
 
 过期私有配置归档至工作区 `runtime/backups/retired-configs-20261015.tar.gz`，同名 JSON 记录原路径与校验值。归档、完整备份和离线制品中的配置仅用于恢复，不是运行入口。
 
-旧 `icp-diag-m7` 仍挂载 `ai-runtime-service/runtime/docker/embedding-models.json`，这份文件保留，待旧容器停用后再清理。工程独立 Compose 已归档，不再作为发布入口；只使用 `runtime/config/docker.env`。
+旧 `icp-diag-m7`、手工恢复验收和 SDK 0.7.1 演示容器已于 2026-10-26 清理，历史数据卷保留。最新独立 ARM64 验证环境见[部署记录](arm64-local-validation-20261026.md)。工程独立 Compose 已归档，不再作为发布入口；只使用 `runtime/config/docker.env`。
