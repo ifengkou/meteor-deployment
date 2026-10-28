@@ -593,9 +593,13 @@ def build(args):
     config = read_env(args.env_file)
     services = args.service or ["ai", "metor", "frontend"]
     product_config = os.environ.get("LICENSE_PRODUCT_CONFIG", "license-build/license-product.json")
+    print(f"Build configuration: {args.env_file.resolve()}", flush=True)
+    print("Build output: Docker image store for the current context; no archive is created in dist/.", flush=True)
     if any(service in ("ai", "metor") for service in services):
         import license_artifacts
 
+        source = "process environment" if "LICENSE_PRODUCT_CONFIG" in os.environ else "default"
+        print(f"License product configuration ({source}): {product_config} relative to each service root", flush=True)
         license_artifacts.verify_build_inputs(WORKSPACE, product_config)
     if args.offline and services != ["ai"]:
         raise ValueError(
@@ -609,6 +613,7 @@ def build(args):
     }
     for service in services:
         directory, key = components[service]
+        print(f"Building {service}: {config[key]} ({config['METOR_PLATFORM']})", flush=True)
         options = ["docker", "build", "--platform", config["METOR_PLATFORM"], "-t", config[key]]
         if service in ("ai", "metor"):
             options += ["--build-arg", "LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED",
@@ -845,7 +850,9 @@ def main():
     global PROJECT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=project_name, default=PROJECT)
-    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV)
+    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV,
+                        help=f"Configuration for this command (default: {DEFAULT_ENV}); "
+                             "build.env is read only when explicitly selected")
     commands = parser.add_subparsers(dest="command", required=True)
     license_create = commands.add_parser("license-init",
         help="Offline SDK initialization; first import reviewed images and stop business/old installer jobs",
@@ -874,7 +881,11 @@ def main():
             "leave originally running writers stopped for an update; also applies on backup failure"
         ),
     )
-    image_build = commands.add_parser("build")
+    image_build = commands.add_parser("build",
+        help="Build application images into the local Docker image store, not tar archives",
+        description="Uses --env-file or runtime/config/docker.env. Does not deploy services or export archives. "
+                    "LICENSE_PRODUCT_CONFIG comes from the process environment; default: "
+                    "license-build/license-product.json relative to each service root.")
     image_build.add_argument(
         "--offline", action="store_true", help="only supported with --service ai"
     )

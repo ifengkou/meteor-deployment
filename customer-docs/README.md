@@ -7,10 +7,12 @@
 | 检查环境、解压、导入镜像、准备目录、启动 | [安装](install.md) |
 | 申请、导入、续期及时间异常恢复 | [软件授权](license.md) |
 | 模型服务、场景、规则与知识资料 | [业务配置](business-config.md) |
-| 状态检查、备份、更新与故障处理 | [运维](operations.md) |
+| 状态检查、备份、更新与恢复 | [运维](operations.md) |
 
 首次顺序：校验并解压 → 导入镜像 → 准备配置与目录 → 初始化授权资料 → 启动服务 → 取得申请并导入许可 → 配置业务资源 → 验收。
 
-目标宿主环境：Linux x86_64、Docker Engine 24.0.7、Python 3.8.10 或更高版本，以及 tar、gzip、sha256sum、curl。本包自带固定的 Compose v2.33.0，由部署脚本自动调用；系统 docker-compose 1.25.0 可以保留，无需升级 Docker、替换系统 Compose 或另装 Python 3.12。宿主无需 JDK、Node、Python 业务依赖或 SDK。已有环境按更新规程操作，不重新初始化。
+目标宿主环境：Linux x86_64、Docker Engine 24.0.7、Python 3.8.10 或更高版本，以及 tar、gzip、sha256sum、curl。本包自带固定的 Compose v2.33.0，由部署脚本自动调用；系统 docker-compose 1.25.0 可以保留，无需升级 Docker、替换系统 Compose 或另装 Python 3.12。宿主无需 JDK、Node、Python 业务依赖或 SDK。已有环境按更新规程操作，使用新包工具配原运行配置，保留数据和授权资料。
 
 包内含部署凭据，按客户约定的受控渠道传输和保存，不公开分发。签发私钥、客户安装身份、业务数据库、业务文件和 Chat 模型服务不包含在包内。不要编辑 manifest 或重写校验清单来绕过校验错误。
+
+首次安装使用安装根目录中的部署脚本；更新后按[运维命令入口](operations.md#命令入口)选定当前发行包工具与原 docker.env。运行镜像只在该 env 的 *_IMAGE 字段切换。

@@ -20,9 +20,14 @@ FILES = {
        for service, uid in (("metor", 21001), ("ai", 21002))
        for name in ("clock.json", "recovery-challenge.json")},
 }
-LOCKS = {".init.lock", "shared/license-import.lock",
-         "state/metor/clock.lock", "state/ai/clock.lock",
-         "state/metor/clock.json.lock"}
+LOCK_METADATA = {
+    ".init.lock": (0, 0, 0o600),
+    "shared/license-import.lock": (21001, 21001, 0o600),
+    "state/metor/clock.lock": (21001, 21001, 0o600),
+    "state/metor/clock.json.lock": (21001, 21001, 0o600),
+    "state/ai/clock.lock": (21002, 21002, 0o600),
+}
+LOCKS = set(LOCK_METADATA)
 REQUIRED = {"identity/installation.json", "identity/service.key",
             "state/metor/clock.json", "state/ai/clock.json"}
 
@@ -118,8 +123,9 @@ def validate_layout(root):
         if not stat.S_ISDIR(path.lstat().st_mode):
             raise ValueError("license directory required")
         check_metadata(path.lstat(), expected)
-    for name in FILES.keys() & paths.keys():
-        check_metadata(paths[name].lstat(), FILES[name])
+    file_metadata = {**FILES, **LOCK_METADATA}
+    for name in file_metadata.keys() & paths.keys():
+        check_metadata(paths[name].lstat(), file_metadata[name])
     return paths
 
 
@@ -128,7 +134,7 @@ def apply_permissions(root):
     paths = reviewed_paths(root)
     if not REQUIRED.issubset(paths):
         raise ValueError("SDK initialization did not produce the complete installation")
-    for name, (uid, gid, mode) in {**DIRECTORIES, **FILES}.items():
+    for name, (uid, gid, mode) in {**DIRECTORIES, **FILES, **LOCK_METADATA}.items():
         path = root / name
         if name in DIRECTORIES or name in paths:
             os.chown(path, uid, gid, follow_symlinks=False)

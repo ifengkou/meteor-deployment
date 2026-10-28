@@ -29,11 +29,11 @@
 
 ## 规则与业务资料
 
-本次是首次迁移：客户旧库六张规则表已有数据，新系统六张规则表为空。必须从客户旧库重新导出当前快照，再转换、显式导入。包内 `deployment/migrations/metor/ai631-rules-upsert.sql` 是本机历史基线，不能替代客户最新规则，也不要先把它导入本次空库。
+以下为六张规则表的首次导入流程，适用于 ICP Diag 目标六表为空的情况。从客户源系统导出最新规则快照，离线转换后显式导入；规则数据以该快照为准，使用工具生成的 SQL。目标已有规则时，先确认合并范围。
 
 ### 1. 在客户旧库侧只读导出
 
-将 `deployment/scripts/ai631-rules.py` 单文件复制到能访问客户旧 MySQL 的机器。该机器需要 Python 3.8+ 和 `mysql` 命令行客户端，无需 pip、SDK 或新系统源码。旧交付包若没有此脚本，单独取得最新脚本并核对传输摘要；不要改写原发行包的校验清单。
+将 `deployment/scripts/ai631-rules.py` 单文件复制到能访问客户旧 MySQL 的机器。该机器需要 Python 3.8+ 和 `mysql` 命令行客户端，无需 pip、SDK 或新系统源码。使用本发行包中的脚本，并核对复制后的文件摘要。
 
 使用专用私有目录保存配置与数据，在该目录放置脚本。新建 `source.cnf`（权限必须为 0600），填写实际旧库连接信息：
 
@@ -57,7 +57,7 @@ python3 ai631-rules.py export \
 sha256sum rules-source.json > rules-source.json.sha256
 ```
 
-脚本检查六张表均存在、使用 InnoDB、字段及类型与既定映射相符，然后在一个一致性只读事务中读取六张表；不会修改旧库。导出期间不调整旧表结构。任何表缺失、字段变化或非事务引擎都会停止，不能手改映射绕过。空表会明确记为 0，不会被当成遗漏；本次客户确认六表都有数据，如结果出现 0，先核对实际库和客户数据。
+脚本检查六张表均存在、使用 InnoDB、字段及类型与既定映射相符，然后在一个一致性只读事务中读取六张表；不会修改旧库。导出期间不调整旧表结构。任何表缺失、字段变化或非事务引擎都会停止，不能手改映射绕过。逐表核对报告中的行数与源库实际一致，空表也应明确记录为 0。
 
 密码只保存在本机私有 source.cnf，不放入命令参数、导出文件或报告；该配置文件不随规则资料传输。保留原始快照与摘要，通过受控渠道将快照、摘要和工具转交实施方。
 
@@ -76,7 +76,7 @@ sha256sum rules-upsert.sql
 
 得到 `rules-upsert.sql` 和 `rules-upsert.report.json`，文件权限为 0600。报告包含原始快照 SHA256、SQL SHA256 和六张表的实际源行数；核对 SQL 摘要等于报告的 sqlSha256。原样保留主键、NULL、空字符串、中文和换行；数值溢出、重复主键、必填字段缺失等异常会拒绝转换。工具拒绝覆盖已有导出、SQL 和报告，重做时换一个新文件名。
 
-表映射如下。本次验收以报告中的客户实际行数为准，不使用历史的 252／407／38869／0／0／71：
+表映射如下，验收行数以本次导出报告为准：
 
 | 客户旧表 | 新系统目标表 |
 | --- | --- |
@@ -89,19 +89,18 @@ sha256sum rules-upsert.sql
 
 ### 3. 核对空目标并显式导入
 
-把 SQL 和报告放在 ECS 的私有传输目录（以下以 `/opt/icp-rule-transfer/` 为例），不要覆盖包内历史 SQL。Metor 已先启动并完成 Flyway 表结构迁移，MySQL 已健康。先核对 SQL 摘要，并暂停规则编辑及新诊断／巡检任务，Metor 和前端保持运行。
+在 ICP Diag 主机的 root 运维终端，先按[运维命令入口](operations.md#命令入口)配置当前 ICP_STACK 和原 ICP_ENV。把 SQL 和报告放在私有传输目录（以下以 `/opt/icp-rule-transfer/` 为例）。Metor 应已启动并完成 Flyway，MySQL 已健康。先核对 SQL 摘要，并暂停规则编辑及新诊断／巡检任务，Metor 和前端保持运行。
 
 确认已有可用备份；若尚未备份，在维护窗口先执行以下命令。现有一致性备份工具会短暂停止并自动恢复写入服务；这属于备份动作，不是规则导入／快照生效的要求。已经完成本次导入前备份时，无需重复执行：
 
 ```bash
-cd /opt/icp-diag
-sudo python3 deployment/scripts/local-stack.py backup /opt/icp-diag/runtime/backups/before-customer-rules-001
+python3 "$ICP_STACK" --env-file "$ICP_ENV" backup /opt/icp-diag/runtime/backups/before-customer-rules-001
 ```
 
 只读检查目标六表行数，确认全部为 0 后再继续；若不为空，停止并按已有规则合并流程评审，不删除或清空数据：
 
 ```bash
-sudo python3 deployment/scripts/local-stack.py compose exec -T mysql sh -c 'MYSQL_PWD="$METOR_DB_PASSWORD" exec mysql --default-character-set=utf8mb4 -u"$METOR_DB_USER" "$METOR_DATABASE"' <<'SQL'
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T mysql sh -c 'MYSQL_PWD="$METOR_DB_PASSWORD" exec mysql --default-character-set=utf8mb4 -u"$METOR_DB_USER" "$METOR_DATABASE"' <<'SQL'
 SELECT 'diag_bit_event_dict' AS table_name, COUNT(*) AS row_count FROM diag_bit_event_dict
 UNION ALL SELECT 'diag_fault_event_dict', COUNT(*) FROM diag_fault_event_dict
 UNION ALL SELECT 'diag_syscall_dict', COUNT(*) FROM diag_syscall_dict
@@ -114,10 +113,10 @@ SQL
 明确指定 Metor 业务账号和目标库导入，不能连接客户旧库，也不要使用 mysql 的 `--force` 忽略错误：
 
 ```bash
-sudo python3 deployment/scripts/local-stack.py compose exec -T mysql sh -c 'MYSQL_PWD="$METOR_DB_PASSWORD" exec mysql --default-character-set=utf8mb4 -u"$METOR_DB_USER" "$METOR_DATABASE"' < /opt/icp-rule-transfer/rules-upsert.sql
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T mysql sh -c 'MYSQL_PWD="$METOR_DB_PASSWORD" exec mysql --default-character-set=utf8mb4 -u"$METOR_DB_USER" "$METOR_DATABASE"' < /opt/icp-rule-transfer/rules-upsert.sql
 ```
 
-SQL 在一个事务中按主键新增／更新全部六表，不修改表结构，不删除目标额外记录，也不属于 Flyway。末尾输出六表 source_rows 和 target_rows，**本次空库首次导入必须逐表完全相等**，并与 report.json 对上。失败时保持业务暂停，保留输出查明原因，不靠重复导入历史 SQL 补齐。
+SQL 在一个事务中按主键新增／更新全部六表，不修改表结构，不删除目标额外记录，也不属于 Flyway。末尾输出六表 source_rows 和 target_rows，**本次空库首次导入必须逐表完全相等**，并与 report.json 对上。失败时保持业务暂停，保留输出查明原因，确认原因后再决定是否重新导入。
 
 ### 4. 页面刷新规则快照并验收
 
@@ -126,7 +125,7 @@ SQL 在一个事务中按主键新增／更新全部六表，不修改表结构�
 确认页面提示“规则刷新完成”，没有失败类别；可同时检查服务端日志：
 
 ```bash
-sudo python3 deployment/scripts/local-stack.py compose logs --tail=100 metor
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose logs --tail=100 metor
 ```
 
 确认最新一次刷新日志中的 `Diagnosis dictionary refresh finished`、`failedCount=0`、`failedCategories=[]`，且没有快照转换失败。出现失败类别时，相关类别会保留旧快照，不能仅凭 HTTP 200 判断全部生效；保持业务暂停并排查。诊断缓存会按 is_fault 等条件筛选、按匹配键分组，缓存数量不要求等于数据库总行数；数据库六表行数仍须与导出报告逐表相等。

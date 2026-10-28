@@ -9,9 +9,23 @@ Metor 与 AI 使用同一份商业许可，各自本地校验。客户无需签�
 3. 收到商业许可 JSON 后核对文件摘要、客户、绑定方式及 UTC 生效／到期时间，在同一页面刷新详情后选择原文件导入。
 4. 首次确认应为 APPLIED，重复同文件应为 ALREADY_APPLIED。当前应生效的许可状态须为 ACTIVE，再验证一个受控业务操作。
 
-只有 Metor 通过 SDK 发布共享商业文件，AI 只读并独立验证；不要手工 copy 文件至 active.license.json。Metor 显示有效后，实施人员还应确认 AI 本地状态及真实摄取／检索正常。没有商业许可时登录、健康和原权限下的维护仍可用，受控操作被拒绝。
+只有 Metor 通过 SDK 发布共享商业文件，AI 只读并独立验证；不要手工 copy 文件至 active.license.json。Metor 显示有效后，按下节核验 AI 侧授权资料，并以真实摄取／检索确认运行服务可用。没有商业许可时登录、健康和原权限下的维护仍可用，受控操作被拒绝。
 
 普通账号或系统 API Key 无导入权限。HTTP 202、OUTCOME_UNKNOWN 或超时不代表成功或失败：保留同文件，刷新状态并重试核对，不重新初始化，也不删除共享文件来判断结果。
+
+## AI 侧授权核验
+
+在客户主机 root 运维终端，先按[运维命令入口](operations.md#命令入口)选定当前 ICP_STACK 和原 ICP_ENV，再调用镜像内 SDK 的只读状态命令：
+
+```bash
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T ai-runtime \
+  python -m license_sdk.cli status \
+  --config /app/app/license-product.json \
+  --root /run/icp-license --service ai \
+  --machine-id /run/icp-host/machine-id
+```
+
+核对输出 state 为 ACTIVE。此命令独立核验磁盘上的许可和时间资料；再完成一次真实摄取或检索，确认正在运行的 AI 服务可执行受控业务。宿主不安装 SDK，不使用 init／import 子命令替代平台操作。
 
 ## 续期与迁机
 
@@ -21,20 +35,20 @@ Metor 与 AI 使用同一份商业许可，各自本地校验。客户无需签�
 
 ## 时间异常恢复
 
-仅在时间回拨、时间记录损坏或持久化异常时使用，普通到期不通过时间恢复解决。先核实并校正宿主 UTC；会话因校时失效时重新登录。两个服务独立恢复，只操作异常的服务。
+时间异常按服务分别处理，普通到期办理续期。先核实宿主 UTC、授权存储读写和磁盘空间；会话因校时失效时重新登录。在存储条件正常且服务方确认需要签名恢复后，只恢复异常的服务。
 
 Metor 管理员在授权页面取得恢复申请，将申请对象或安装 UUID、服务 metor 与 RC1J 恢复码交服务方；收到签名恢复文件后在约定窗口内从同页应用。
 
-AI 由运维从安装根目录取得申请：
+AI 由运维使用上节已选定的 ICP_STACK／ICP_ENV 取得申请：
 
 ```bash
-python3 deployment/scripts/local-stack.py license-recovery request --output /absolute/private/ai-recovery-request.json
+python3 "$ICP_STACK" --env-file "$ICP_ENV" license-recovery request --output /absolute/private/ai-recovery-request.json
 ```
 
 输出路径必须尚不存在。服务方使用申请对象签出针对 ai 的恢复文件；无法传申请文件时，按受控渠道提供安装 UUID、服务 ai 和 RC1A 恢复码。文件入网后在窗口内执行：
 
 ```bash
-python3 deployment/scripts/local-stack.py license-recovery apply --file /absolute/private/ai-recovery.json
+python3 "$ICP_STACK" --env-file "$ICP_ENV" license-recovery apply --file /absolute/private/ai-recovery.json
 ```
 
 APPLIED／ALREADY_APPLIED 表示本次恢复已确认；OUTCOME_UNKNOWN 仍保留同文件重试核对。恢复不修改商业期限、绑定或另一服务状态，无需手工编辑 JSON，也不删除 clock 或更换安装身份。
@@ -47,5 +61,5 @@ APPLIED／ALREADY_APPLIED 表示本次恢复已确认；OUTCOME_UNKNOWN 仍保�
 | NOT_YET_VALID／EXPIRED | 核对 UTC，等待生效或办理续期 |
 | INVALID／绑定不符 | 核对当前宿主、安装和原签名文件，联系服务方 |
 | POLICY_INVALID | 恢复正确发行镜像，不以环境变量替换包内信任 |
-| CLOCK_ROLLBACK／CLOCK_STATE_INVALID | 校正 UTC 后办理对应服务的签名恢复 |
+| CLOCK_ROLLBACK／CLOCK_STATE_INVALID | 核对 UTC 与存储条件，由服务方确认对应服务的恢复操作 |
 | OUTCOME_UNKNOWN | 保留文件，刷新并重试；检查磁盘、共享目录和状态目录权限 |

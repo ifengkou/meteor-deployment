@@ -2,7 +2,7 @@
 
 当前已验收的完整环境为 Docker 项目 `icp-diag-local`，页面入口为
 <http://127.0.0.1:18180/>。本文中的路径以工作区 `icp_diag/` 为起点；操作命令见
-[源码运行手册](../../ai-runtime-service/docs/operations/running.md) 和 [Docker 整体/单服务更新](updates.md)。
+[源码运行手册](../../ai-runtime-service/docs/operations/running.md)、[本机 deploy](local-release/02-deploy.md)及[客户 deploy](customer-release/02-deploy.md)。
 
 ## 配置归属
 
@@ -58,6 +58,23 @@ Metor `.env.local` 保留为共享源码配置的链接。旧阶段配置和独�
 所在目录为 0700。修改它后按更新手册重新创建相关服务；普通 `restart` 不会重新加载 Compose
 环境。不要重新执行 `init` 覆盖现有配置，也不要将密码改动等同于既有 MySQL 用户已完成改密。
 
+### 镜像 tag 与构建文件
+
+运行版本由 runtime/config/docker.env 中的 *_IMAGE 选择，Compose 的 `${变量:-默认tag}` 只是变量缺失／为空时的兜底，不需要每次发版改多个 YAML。build 默认也读取这份文件；显式 `--env-file .../build.env` 时才改读独立制作配置，文件不会自动叠加或被后续 compose 记住。普通 build 的产物在当前 Docker 镜像库，不在 dist/。
+
+| 字段 | 使用的服务 | YAML 缺省值 |
+| --- | --- | --- |
+| MYSQL_IMAGE | mysql | mysql:8.4 |
+| AI_RUNTIME_IMAGE | ai-runtime、ai-migrate | ai-runtime-service:0.1.0 |
+| METOR_IMAGE | metor | metor-service:0.1.0 |
+| FRONTEND_IMAGE | frontend | metor-platform-frontend:p6-local |
+
+直接 local-stack.py 的 Compose 遵循 Shell 同名变量 > 选定 env > YAML 兜底；普通 build 从选定文件读取镜像名。本机 desktop-stack.py 不传 Shell 覆盖变量，运行选择统一写 env。--env-file 必须放在子命令前；默认文件始终为 runtime/config/docker.env，build.env 不会被下一条 compose 自动沿用。
+
+LICENSE_PRODUCT_CONFIG 只在 build 的进程环境中选择，不读取 build.env／docker.env 同名项；默认分别为两个业务工程内 license-build/license-product.json，原始字节须相同。具体示例见[本机 build](local-release/01-build.md#1-准备正式构建输入)或[客户 build](customer-release/01-build.md#license-productjson-放在哪里如何指定)。
+
+LICENSE_ROOT 是运行期安装身份／状态目录；不是构建用公开配置。Linux 客户默认为 /opt/icp-diag/runtime/license；Docker Desktop 本机使用专用 Linux 卷，DESKTOP_LICENSE_VOLUME=icp-diag-local-license，LICENSE_ROOT 填该卷实际 Mountpoint。业务文件仍在工作区 runtime，授权根不会出现在 Mac 的 runtime/license。本机数值权限维护必须走[本机 deploy](local-release/02-deploy.md)的 Linux 运维入口。
+
 ## 进程配置与业务配置的边界
 
 - 进程配置：数据库、存储路径、模型清单位置、端口、网关地址，通过环境和 Compose 管理。
@@ -68,8 +85,6 @@ Metor `.env.local` 保留为共享源码配置的链接。旧阶段配置和独�
 AI 在宿主运行时可用 `http://127.0.0.1:11434` 访问宿主 Ollama；在 Docker 中应改为
 `http://host.docker.internal:11434` 或实际模型服务地址。容器中的 `localhost` 指向容器本身。
 
-## 过期配置与恢复资料
+## 配置保管
 
-过期私有配置归档至工作区 `runtime/backups/retired-configs-20261015.tar.gz`，同名 JSON 记录原路径与校验值。归档、完整备份和离线制品中的配置仅用于恢复，不是运行入口。
-
-旧 `icp-diag-m7`、手工恢复验收和 SDK 0.7.1 演示容器已于 2026-10-26 清理，历史数据卷保留。最新独立 ARM64 验证环境见[部署记录](arm64-local-validation-20261026.md)。工程独立 Compose 已归档，不再作为发布入口；只使用 `runtime/config/docker.env`。
+运行 env 与模型清单保存在 runtime/config。备份中的配置用于恢复，运行命令使用当前完整 docker.env。真实凭据、运行数据和备份不提交 Git。

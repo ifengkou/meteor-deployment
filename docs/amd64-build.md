@@ -1,82 +1,111 @@
-# 在 Apple Silicon 上隔离构建 Linux AMD64 镜像
+# Apple Silicon 隔离制作 Linux AMD64 归档
 
-## 目标与验证边界
+本文只维护专用 Buildx builder、单组件归档、下载源和缓存细节。客户 AMD64 输入、普通构建、版本冻结及统一组包以[客户 build](customer-release/01-build.md)为准；本机 ARM64 制作另见[本机 build](local-release/01-build.md)。本文不维护安装／更新命令。
 
-本方案在 macOS M2 上使用独立的 `docker-container` Buildx builder 构建 M6 的三个 Linux AMD64
-镜像。AMD64 基础镜像仅进入该 builder 的缓存，结果直接导出为 Docker archive；不执行
-`docker pull --platform linux/amd64`、`--load` 或 `docker load`，因此不会改变本地 ARM64 镜像和 tag。
+## 适用范围与边界
 
-本阶段验证：
+在 Apple Silicon 上使用独立的 docker-container builder 制作 AMD64 归档，结果通过 type=docker 输出为 tar。基础镜像留在 builder 缓存中，不执行 --load、docker pull 或 docker load，不改变日常 ARM64 镜像和 tag。
 
-- AI Runtime 和 metor-service Dockerfile 的所有 build step 实际成功；
-- MySQL 8.4 AMD64 制品可获取；
-- 三个 archive 结构有效，镜像 config 均声明 `linux/amd64`；
-- 生成每个 archive 的 SHA-256。
+脚本固定使用 linux/amd64，不读取 build.env。ARM64 本机构建直接使用[本机 build](local-release/01-build.md)的 local-stack.py build。制作成功及 archive 校验仅证明构建结果和声明架构，不证明原生 AMD64 运行或真实 DAT 解密通过。
 
-本阶段明确不验证：AMD64 容器启动、Compose 冷启动、健康检查、数据库迁移、备份恢复和断网重启。
-这些项目需要 AMD64 Linux 主机，在正式发布环境验收。
+## 1. 前置检查与专用 builder
 
-## 前置检查
+从四工程工作区根目录、在 Bash 会话中执行；任一步失败先停止。SDK 0.7.1 和正式公开配置先按[输入清单](customer-release/01-build.md#1-冻结源码及外部输入)准备。
 
 ```bash
-docker buildx inspect --bootstrap
+docker buildx version
 docker info --format '{{json .RegistryConfig.Mirrors}}'
 ```
 
-本机 builder 必须支持 `linux/amd64`。新建 builder 时，脚本自动读取 Docker daemon 配置中的第一个
-Docker Hub mirror，并写入该 builder 的独立配置；没有 mirror 时使用官方仓库。可显式覆盖：
+build-amd64-images.sh 默认创建或复用 m6-amd64-builder，使用 docker-container driver，并检查 builder 支持的目标平台。首次创建时，它读取 Docker daemon 的第一个 Docker Hub mirror；没有 mirror 时使用官方仓库。可显式指定：
 
 ```bash
 M6_DOCKERHUB_MIRROR=https://your-working-mirror.example.com \
-deployment/scripts/build-amd64-images.sh 0.1.0
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
 ```
 
-若同名 builder 已存在，脚本复用其原配置。要更换 mirror，应显式删除这个专用 builder 后重建；该
-动作只删除专用 builder 缓存，不操作默认 Docker image store：
+已存在的 builder 复用原配置。需要改 mirror 且确定不再需要其缓存时，可以先移除这个专用 builder，再由制作脚本创建；不操作默认镜像库：
 
 ```bash
 docker buildx rm m6-amd64-builder
 ```
 
-## 执行构建
+自定义 builder 名称使用 M6_BUILDER_NAME，后续组件、前端和缓存预热必须使用同一个 builder。
+
+## 2. AI、Metor、MySQL 归档
+
+示例 tag 与构建指南的 AMD64 build.env 一致。完整制作执行：
 
 ```bash
-cd /Users/sloong/Workspace/github/icp_diag
-deployment/scripts/build-amd64-images.sh 0.1.0
+M6_MYSQL_IMAGE=icp-diag-mysql:8.4-amd64-20261028-1 \
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
 ```
 
-输出目录默认为：
+脚本默认只制作 ai、metor、mysql；前端见第 3 节。输出目录默认是 dist/m6-amd64-images-release-20261028-1-amd64，可用 M6_IMAGE_OUTPUT_DIR 修改。
 
-```text
-dist/m6-amd64-images-0.1.0/
-├── ai-runtime-service_0.1.0_linux-amd64.tar
-├── metor-service_0.1.0_linux-amd64.tar
-├── mysql_8.4_linux-amd64.tar
-└── SHA256SUMS
-```
+### 单组件制作或失败续跑
 
-可以使用 `M6_IMAGE_OUTPUT_DIR` 修改输出位置。架构校验由标准库脚本
-`inspect-docker-archive.py` 完成，不依赖 skopeo，也不把 archive 导入本地 Docker。
-
-按组件续跑（不会重建未选中的组件）：
+以下命令按需要选择。首次仅制作某一项或未验收版本的失败续跑可选择组件；已发布／已验收版本有源码变化时必须使用新版本号，不覆盖旧制品。
 
 ```bash
-M6_BUILD_COMPONENTS="metor mysql" deployment/scripts/build-amd64-images.sh 0.1.0
+# 仅 AI
+M6_BUILD_COMPONENTS=ai \
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
+
+# 仅 Metor
+M6_BUILD_COMPONENTS=metor \
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
+
+# 仅 MySQL，使用专用 tag
+M6_BUILD_COMPONENTS=mysql M6_MYSQL_IMAGE=icp-diag-mysql:8.4-amd64-20261028-1 \
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
+
+# 多组件选择
+M6_BUILD_COMPONENTS="ai metor" \
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
 ```
 
-脚本同时保存各组件的 `.build.log`、`.build-metadata.json` 和归档的 `.inspection.json`。构建先输出
-`.tar.partial`，校验 config/层成员及 SHA-256 blob 后才替换正式归档；失败不会覆盖上次成功的 tar。
-三个归档全部存在且校验通过才生成总 `SHA256SUMS`。这些检查不等价于运行验证。
+AI 和 Metor 固定 CUSTOMER_REQUIRED 并检查正式输入。AI_RUNTIME_IMAGE／METOR_IMAGE 的 tag 由传给脚本的版本号确定；MySQL tag 由 M6_MYSQL_IMAGE 确定，必须与组包 build.env 一致。
 
-metor 构建使用固定 id `metor-gradle` 的独立 BuildKit cache mount。未预热时，Wrapper 首次通过
-官方 `services.gradle.org` 地址获取 Gradle 8.14；同一 builder 后续构建直接复用分发包和模块依赖，
-Dockerfile 不再动态改写 `GRADLE_DISTRIBUTION_URL`。Docker Hub mirror 不代理 Gradle、PyPI 或
-GHCR；首次填充这些缓存时仍需要相应网络，或使用下述本地缓存预热流程。
+每个组件先写 .tar.partial，校验 config、层文件及 SHA256 blob 后才移动为正式 tar。仅制作一项不代表完整交付包已经就绪；三个脚本归档全部存在并通过检查时才输出其汇总 SHA256SUMS。
 
-### Gradle 下载不稳定时：复用已验证缓存
+## 3. 单独制作前端归档
 
-若本机已有完整的 Gradle 8.14 分发目录及相同项目依赖缓存，可以先用以下命令填充**专用 builder**
-的 `metor-gradle` cache mount，然后进行 Gradle 离线编译：
+前端不是 M6_BUILD_COMPONENTS 的可选项，需要单独调用 Buildx。仅制作前端且专用 builder 尚不存在时，先创建它；若已由脚本创建则直接复用。自定义 builder 名称时同步替换以下 m6-amd64-builder：
+
+```bash
+if ! docker buildx inspect m6-amd64-builder >/dev/null 2>&1; then
+  docker buildx create --name m6-amd64-builder --driver docker-container
+fi
+docker buildx inspect m6-amd64-builder --bootstrap
+
+ICP_AMD64_VERSION=release-20261028-1-amd64
+ICP_AMD64_OUTPUT="$PWD/dist/m6-amd64-images-${ICP_AMD64_VERSION}"
+mkdir -p "$ICP_AMD64_OUTPUT"
+
+docker buildx build \
+  --builder m6-amd64-builder \
+  --platform linux/amd64 \
+  --progress=plain --provenance=false \
+  --metadata-file "$ICP_AMD64_OUTPUT/frontend.build-metadata.json" \
+  --tag "metor-platform-frontend:${ICP_AMD64_VERSION}" \
+  --output "type=docker,dest=$ICP_AMD64_OUTPUT/frontend_${ICP_AMD64_VERSION}_linux-amd64.tar.partial" \
+  frontend
+
+python3 deployment/scripts/inspect-docker-archive.py \
+  "$ICP_AMD64_OUTPUT/frontend_${ICP_AMD64_VERSION}_linux-amd64.tar.partial" \
+  --expect-os linux --expect-architecture amd64
+mv "$ICP_AMD64_OUTPUT/frontend_${ICP_AMD64_VERSION}_linux-amd64.tar.partial" \
+  "$ICP_AMD64_OUTPUT/frontend_${ICP_AMD64_VERSION}_linux-amd64.tar"
+```
+
+前端专用 builder 的下载源沿用其创建配置；上面的直接创建方式不自动读取 M6_DOCKERHUB_MIRROR。
+
+## 4. Gradle 下载与缓存预热
+
+Metor 构建使用固定 id metor-gradle 的 BuildKit cache mount。首次构建需要 Gradle 8.14 分发包和依赖，后续可复用；Docker Hub mirror 不代理 Gradle、PyPI 或 GHCR。
+
+已有完整、经验证的 Gradle 8.14 分发目录及 modules-2 依赖缓存时，可预热同一个专用 builder，再离线编译 Metor。以下路径替换为实际缓存位置：
 
 ```bash
 deployment/scripts/seed-gradle-cache.sh \
@@ -84,27 +113,26 @@ deployment/scripts/seed-gradle-cache.sh \
   /Users/sloong/.gradle/caches/modules-2
 
 M6_GRADLE_OFFLINE=1 M6_BUILD_COMPONENTS=metor \
-  deployment/scripts/build-amd64-images.sh 0.1.0
+  deployment/scripts/build-amd64-images.sh release-20261028-1-amd64
 ```
 
-将示例路径替换为自己的已验证缓存。脚本只复制 Gradle 8.14 分发目录、完成标记以及 modules-2 的
-制品/元数据，不复制整个 Gradle 用户目录、`gradle.properties`、凭据、init script 或本机 JDK。
-Java 编译仍由 AMD64 JDK 执行；缓存缺少依赖时 `--offline` 会明确失败，不会隐式下载或跳过编译。
-`seed-gradle-cache.Dockerfile` 的版本/路径绑定于当前 wrapper 8.14，升级 wrapper 时需一起更新。
-预热和构建必须使用同一个 builder；该流程不要添加全局 `--no-cache`，否则不能复用 cache mount。
-这仅代表 Gradle 编译阶段离线，不代表整个镜像构建无网络（基础镜像和 apt 仍可能联网）。
+预热脚本只复制指定分发目录、完成标记和 modules-2 制品／元数据，不复制整个 Gradle 用户目录、gradle.properties、凭据、init script 或宿主 JDK。编译仍由 AMD64 JDK 执行；缺依赖时 --offline 会失败，不隐式下载。
 
-手工复核：
+自定义 builder 时给预热脚本设置 GRADLE_CACHE_BUILDER 或 M6_BUILDER_NAME，与制作保持一致。不要用全局 --no-cache 破坏缓存复用；升级 Wrapper 时同步更新 seed-gradle-cache.Dockerfile 的版本约定。Gradle 编译离线不等于整个镜像构建无网络，基础镜像和 apt 等仍可能联网。
 
-```bash
-python3 deployment/scripts/inspect-docker-archive.py \
-  dist/m6-amd64-images-0.1.0/ai-runtime-service_0.1.0_linux-amd64.tar
+## 5. 制作结果与移交组包
 
-cd dist/m6-amd64-images-0.1.0
-shasum -a 256 -c SHA256SUMS
+四个归档应为：
+
+```text
+dist/m6-amd64-images-release-20261028-1-amd64/
+├── ai-runtime-service_release-20261028-1-amd64_linux-amd64.tar
+├── metor-service_release-20261028-1-amd64_linux-amd64.tar
+├── mysql_8.4_linux-amd64.tar
+├── frontend_release-20261028-1-amd64_linux-amd64.tar
+└── SHA256SUMS
 ```
 
-## 后续运行验收
+脚本生成的 SHA256SUMS 仅覆盖 AI、Metor、MySQL 三个归档；前端需单独完成检查。完整四镜像、模型、配置及文档的最终校验清单由[统一组包流程](customer-release/01-build.md#4-验证实际镜像并导出)生成，不手工拼客户交付包。
 
-获得 AMD64 Linux 主机后，再执行 `docker load`、双 Compose 冷启动、migration gate、readiness、账号
-隔离和备份恢复测试。在此之前不应把“构建及归档验证通过”表述为“AMD64 运行验证通过”。
+构建日志、build-metadata.json 和 inspection.json 保留为制作方证据。将四个已核验 tar 移交独立组包环境，继续构建指南的第 4 节；本文不执行客户安装、数据库迁移、启动或更新。

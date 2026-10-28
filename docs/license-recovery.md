@@ -7,7 +7,10 @@
 - 已加载本次产品镜像及完整依赖，服务正在运行；无需客户联网、安装 SDK 或停止服务。
 - 运维先核实并校正宿主 UTC。不要通过删除 clock、重新初始化安装或反复调时间处理异常。
 - Metor 使用平台管理员登录凭据；AI 客户端使用容器内现有安装凭据，不新增账号体系。
+- 确认授权存储可读写、空间充足。
 - 我方签发私钥、签发工具和签发记录留在我方，不交付客户。
+
+Linux 客户使用 local-stack.py；本机 Docker Desktop 使用 desktop-stack.py，license-recovery 子命令及参数相同。
 
 ## 1. 取得申请
 
@@ -30,8 +33,7 @@ python3 deployment/scripts/local-stack.py --env-file /absolute/docker.env \
   license-recovery request --output /absolute/ai-recovery-request.json
 ```
 
-脚本通过 `compose exec -T ai-runtime` 调用容器内维护客户端；客户端按本镜像固化的公开配置创建临时 SDK Runtime，仅读取安装凭据生成短期 ControlProof 后关闭，不启动 checkpoint、不在客户端应用恢复。
-请求直接到本 AI 服务，由服务内长期 Runtime 处理，不经过 Metor、不直接修改 clock。宿主只需 Python 标准库和 Docker。申请文件以 0600 创建，不覆盖已有文件。
+命令由当前 AI 服务返回恢复申请，输出文件以 0600 创建，不覆盖已有文件。
 
 已有申请仍适用时返回同一申请。只有 APPLIED/ALREADY_APPLIED 是确认完成；HTTP 202 或 OUTCOME_UNKNOWN 表示持久性尚未确认，请重试同一操作，取得申请尚未确认时不要交给签发方。
 
@@ -61,7 +63,7 @@ license-issuer sign-recovery --config /absolute/vendor/issuer.toml \
 
 `RECOVERY_START_UTC` 和 `RECOVERY_END_UTC` 使用当前约定的 UTC，格式为 `YYYY-MM-DDTHH:MM:SSZ`；签发时刻不得晚于窗口开始，窗口结束不得晚于签发时刻七天。
 CLI 需为窗口起点留出实际签发时间，不能把已过去的时间作为新窗口开始。`ISSUANCE_UUID` 使用本次唯一 UUID，同申请同参数重试必须复用原编号及同一 TOML 指定的记录目录，避免重复签发。
-产品、服务、密钥和记录路径来自 TOML；旧 `--product`／`--key-id`／`--private-key`／`--records-dir` 签发参数已不适用。私钥口令由终端安全提示输入，不放进 TOML。
+产品、服务、密钥和记录路径来自 TOML。私钥口令由终端安全提示输入。
 
 手抄模式把 `--request-file` 替换为：
 
@@ -100,12 +102,3 @@ python3 deployment/scripts/local-stack.py --env-file /absolute/docker.env \
 - 恢复成功后的商业状态仍可能为 EXPIRED、NOT_YET_VALID 或 MISSING，需要另行处理商业许可。
 
 最后重新查询本服务授权状态，并重试一个受控操作。恢复不改商业许可字节、期限或机器绑定，不读取或修改另一服务时间文件。
-
-## 包内策略异常
-
-POLICY_INVALID 表示包内 API 清单或构建摘要异常。用同版本正确发行包或镜像恢复并重启服务；运行中不重载文件，不支持以外部空清单关闭检查。固定关键方法也会检查该状态。时间恢复只修复时间状态，不能修复策略异常。
-
-## 验证边界
-
-自动验证使用隔离目录、合成密钥与受控时间源，不调整真实机器时钟；具体执行制品、平台和结果见 [SDK 升级手册](license-sdk-upgrade.md)。
-历史 SDK 0.6.0 的人工环境不代表当前 0.7.1 镜像验收，客户实际公钥兼容、目标 Linux AMD64 与人工页面项目均应单独确认。

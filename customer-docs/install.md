@@ -20,14 +20,14 @@ python3 --version
 
 ```bash
 sha256sum -c icp-diag-linux-amd64.tar.gz.sha256
-mkdir -p /opt/icp-diag
+mkdir -m 0755 /opt/icp-diag
 tar --no-same-owner -xzf icp-diag-linux-amd64.tar.gz --strip-components=1 -C /opt/icp-diag
 cd /opt/icp-diag
-./deployment/bin/docker-compose-v2 version
 sh deployment/scripts/import-images.sh .
+./deployment/bin/docker-compose-v2 version
 ```
 
-解压目标必须是空目录。脚本检查包内 SHA256SUMS、许可 SDK、模型与清单，导入后再检查镜像 ID 和架构。任一步失败即停止，不手工替换 tag 或跳过校验。缺少镜像时不会自动从公网拉取。
+/opt/icp-diag 必须是新目录；已有安装使用更新流程。每条命令成功后再继续。脚本检查包内 SHA256SUMS、许可 SDK、模型与清单，导入后再检查镜像 ID 和架构。任一步失败即停止，不手工替换 tag 或跳过校验。缺少镜像时不会自动从公网拉取。
 
 ## 3. 准备目录与配置
 
@@ -35,9 +35,11 @@ sh deployment/scripts/import-images.sh .
 python3 deployment/scripts/prepare-runtime.py
 ```
 
-脚本自动选择本包镜像，填写目标主机路径，复用包内三项数据库密码与 JWT，生成 runtime/config/docker.env（0600）及 Embedding 清单；创建数据、日志、工作、备份目录并设置数值权限。完整模型已在 models/embedding，无需另传权重，运行时只读挂载。
+脚本自动选择本包镜像，填写目标主机路径，复用包内三项数据库密码与 JWT，生成完整 runtime/config/docker.env（0600）及 Embedding 清单；创建数据、日志、工作、备份目录并设置数值权限。完整模型已在 models/embedding，无需另传权重，运行时只读挂载。
 
 Metor UID/GID 为 21001，AI 为 21002，共同许可组为 21000。脚本检查实际镜像账号和主机数值账号冲突；不得使用 chmod 777 或对整个安装目录递归改属主。SELinux 主机由运维落实相应挂载策略。
+
+生成的 env 由脚本负责特殊字符转义，不通过 shell source 加载。已有镜像引用由 manifest 自动填写，不再手工替换默认 tag。
 
 相同配置下可重复执行；已有不同配置、软链接或非空目录属主不符会拒绝覆盖。准备完成后人工修改过配置时，按更新流程维护，不重新运行脚本来重置已有安装。
 
@@ -45,7 +47,7 @@ Metor UID/GID 为 21001，AI 为 21002，共同许可组为 21000。脚本检查
 
 ## 4. 初始化安装授权资料
 
-确认本安装 Metor／AI、源码进程和旧初始化任务均未运行，确认真实稳定的 /etc/machine-id 可用，再执行：
+确认本安装 Metor／AI 及其他初始化任务均未运行，确认真实稳定的 /etc/machine-id 可用，再执行：
 
 ```bash
 python3 deployment/scripts/local-stack.py license-init
@@ -71,7 +73,7 @@ curl --fail http://127.0.0.1:18080/actuator/health/readiness
 curl --fail http://127.0.0.1:18092/internal/health/ready
 ```
 
-逐条确认成功后再继续。AI 显式运行 Alembic，Metor 启动执行 Flyway。MySQL 使用命名卷，数据库为 metor_service 和 metor_ai；修改 env 不会给已有 MySQL 用户改密，也不会重放初始化 SQL。
+逐条确认成功后再继续。ai-migrate 是一次性 Alembic 数据库迁移任务，不准备目录、授权或模型；Metor 启动执行 Flyway。MySQL 使用命名卷，数据库为 metor_service 和 metor_ai；修改 env 不会给已有 MySQL 用户改密，也不会重放初始化 SQL。
 
 ## 6. 访问与开通
 
@@ -85,4 +87,4 @@ ssh -N -L 18180:127.0.0.1:18180 operator@customer-host
 
 使用上述隧道时，浏览器打开 http://127.0.0.1:18180/。需要域名／TLS 时可配置反向代理，将入口转发至前端 18180 端口，并验证上传大小、长任务超时和下载。同宿主代理可使用 127.0.0.1:18180。不要直接开放数据库和 AI 管理端口。
 
-按[软件授权](license.md)取得申请并导入许可，再完成[业务配置](business-config.md)。健康检查通过不代表商业许可、Chat 服务或航空业务已经可用。
+后续状态检查、备份和更新按[运维指南](operations.md)执行。按[软件授权](license.md)取得申请并导入许可，再完成[业务配置](business-config.md)。健康检查通过不代表商业许可、Chat 服务或航空业务已经可用。

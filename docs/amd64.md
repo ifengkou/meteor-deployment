@@ -1,451 +1,53 @@
-# Linux AMD64 镜像制作、部署与更新
+# Linux AMD64 架构说明与验收要点
 
-部署约定：宿主机使用 `/opt/icp-diag` 作为统一目录，MySQL 继续使用 Docker 命名卷。前端、Metor、AI Runtime 分别制作镜像，通过 Compose 组合部署，后续可单独更新。
+本文只维护 AMD64 平台边界和 JNI 验收要点。构建、组包、首次安装及日常更新分别使用下列入口，不在此重复操作步骤。
 
-本说明原始基线为 2026-10-16，现已更新到 **SDK 0.7.1** 的客户构建、固定工具镜像与统一导出路径。
-下文 `release-20261016-1` 仅为历史格式的版本号示例，制作新版时须替换为唯一新版本；不能直接沿用旧镜像作新版验收。
-命令是操作步骤，不代表目标 AMD64 主机已完成运行验收。首次发布仍需在原生 Linux x86_64 环境验证 JNI、真实样本、备份恢复和业务功能。
+## 操作入口
 
-## 1. 环境与交付内容
+| 任务 | 唯一操作说明 |
+| --- | --- |
+| 冻结版本、准备输入、客户 AMD64 镜像、单服务制作、统一组包 | [构建与交付包](customer-release/01-build.md) |
+| 本机 ARM64 构建与部署 | [本机 build](local-release/01-build.md) → [本机 deploy](local-release/02-deploy.md) |
+| Apple Silicon 的专用 Buildx、组件归档、下载源与缓存 | [AMD64 隔离构建细节](amd64-build.md) |
+| 客户宿主依赖、校验／解压、目录权限、初始化、迁移、启动与访问 | [首次部署](customer-release/02-deploy.md) |
+| 签发商业许可 | [授权签发](customer-release/03-license-issue.md) |
+| 导入许可与最终业务验收 | [授权导入与验收](customer-release/04-license-import.md) |
+| 已有环境全套／单服务更新、配置变更与回退 | [客户 deploy](customer-release/02-deploy.md#7-已有环境更新) |
+| 一致性备份和隔离恢复 | [备份恢复](backup-restore.md) |
+| SDK 输入、已有安装信任兼容与升级 | [SDK 接入与升级](license-sdk-upgrade.md) |
+| Chat、场景、规则及业务资料 | [业务资料清单](customer-release/business-materials.md) |
 
-### 制作机
+客户交付包中只包含 customer-docs 的使用指南；这些制作方技术文档不进入客户包。
 
-制作机需要三个业务工程与部署工程同级：
+## 架构约定
 
-```text
-icp_diag/
-├── deployment/
-├── ai-runtime-service/
-├── metor-service/
-└── frontend/
-```
+本次客户目标为 **Linux x86_64／AMD64**。客户主机 uname -m 应为 x86_64，四镜像实际平台均为 linux/amd64。构建参数或 env 中写 linux/amd64 不会把已有 ARM64 镜像转换为 AMD64，最终按实际镜像／归档和 manifest 核对。
 
-需要 Docker、Buildx、Python 3.9+、Bash、`shasum` 和包校验使用的 `sha256sum`。Apple Silicon Mac 可通过专用 Buildx builder 制作 AMD64 归档；
-组包阶段须将它们导入**独立制作环境**的 Docker 镜像库，并能以模拟方式执行 AMD64 的无业务工具探测。不要覆盖日常 ARM64 发布 tag，也不要直接导出 Mac 当前运行的 ARM64 镜像。
-原生 AMD64 Linux 可直接完成制作与组包；模拟环境的构建／导出通过不能代替原生目标验收。
+| 项目 | AMD64 | ARM64 |
+| --- | --- | --- |
+| METOR_PLATFORM | linux/amd64 | linux/arm64 |
+| 常见宿主 | x86_64 Linux | Apple Silicon Docker／aarch64 Linux |
+| SDK 与客户模式 | SDK 0.7.1，CUSTOMER_REQUIRED | 相同，不因架构切换为开发模式 |
+| DAT JNI | 包含 x86-64 的 libEncryptAndDecrypt.so | Dockerfile 移除该库，不能验证此 DAT 解密链路 |
+| 对当前客户发行的作用 | 原生验收与交付目标 | 对应平台开发／补充验证 |
 
-首次构建需访问基础镜像仓库、Gradle、Python 和前端依赖源。先按 [Metor 授权构建](../../metor-service/license-build/README.md) 与
-[AI 授权构建](../../ai-runtime-service/license-build/README.md) 准备正式 SDK 0.7.1 制品，以及两工程中**同一原始字节**的 `license-build/license-product.json`。
-制作脚本强制客户模式并核对输入，不能使用旧 DER 公钥表替代。AI 构建上下文必须有 `wheelhouse/` 及锁定的 core wheel；
-选择离线构建时须另外准备完整 AMD64 产品依赖闭包，ARM64 wheel 不能用于 AMD64，详见 [离线部署说明](offline-deployment.md)。
+Apple Silicon 上的 AMD64 构建及模拟运行可以发现部分问题，但不代替原生客户架构验收。普通 JVM 启动成功不能证明 JNI 可以加载或 DAT 解密正确。
 
-### 目标 Linux 主机
+## JNI 与真实业务验收
 
-| 工具 | 要求与用途 |
-|---|---|
-| CPU／系统 | Linux x86_64，`uname -m` 应为 `x86_64` |
-| Docker Engine | 服务运行与镜像导入，操作者需具备 Docker 使用权限 |
-| Compose 插件 | 2.24.4 或更新版，共享目录配置使用 `!override` |
-| Python | 3.9+，建议 3.12，仅用于部署管理脚本 |
-| 系统工具 | `tar`、`gzip`、`sha256sum`，健康检查示例另用 `curl` |
-
-检查命令：
-
-```bash
-uname -m
-docker version
-docker compose version
-python3 --version
-tar --version
-gzip --version
-sha256sum --version
-```
-
-`deployment/scripts/local-stack.py` 只使用 Python 标准库，不需要虚拟环境或 `pip install`。没有 Python 时，提前安装发行版提供的 Python；离线机需准备对应发行版及架构的系统安装包和依赖。也可直接运行 Compose，但需自行保持相同配置文件、项目名和迁移／备份顺序。
-
-目标机不需要 Git、JDK、Node、宿主 Python 业务依赖或源码。服务运行环境已经在镜像中。模型权重、Chat 模型服务、业务数据和私有凭据不包含在通用镜像包中，应分别准备。
-
-## 2. 在制作机生成四个 AMD64 镜像
-
-以下命令从制作机工作区根目录执行，`deployment/` 与三个业务工程同级。`release-20261016-1` 为示例版本，每次发布替换为唯一版本号，不覆盖旧版本 tag。
-
-```bash
-docker buildx version
-deployment/scripts/build-amd64-images.sh release-20261016-1
-```
-
-现有脚本构建 AI、Metor、MySQL，默认输出到工作区 `dist/m6-amd64-images-release-20261016-1/`。专用 builder 名为 `m6-amd64-builder`，可用 `docker buildx inspect m6-amd64-builder --bootstrap` 确认支持 `linux/amd64`。
-
-前端需另行制作：
-
-```bash
-docker buildx build \
-  --builder m6-amd64-builder \
-  --platform linux/amd64 \
-  --provenance=false \
-  --tag metor-platform-frontend:release-20261016-1 \
-  --output type=docker,dest=dist/m6-amd64-images-release-20261016-1/frontend_release-20261016-1_linux-amd64.tar \
-  frontend
-
-python3 deployment/scripts/inspect-docker-archive.py \
-  dist/m6-amd64-images-release-20261016-1/frontend_release-20261016-1_linux-amd64.tar
-```
-
-四个制品与部署变量对应如下：
-
-| 制品中的镜像 tag | 部署变量 |
-|---|---|
-| `mysql:8.4` | `MYSQL_IMAGE` |
-| `ai-runtime-service:release-20261016-1` | `AI_RUNTIME_IMAGE` |
-| `metor-service:release-20261016-1` | `METOR_IMAGE` |
-| `metor-platform-frontend:release-20261016-1` | `FRONTEND_IMAGE` |
-
-三个后端归档由构建脚本校验，前端由上述检查命令校验，均应显示 `linux/amd64`。构建成功与架构校验不等于容器启动或 JNI 验收通过。
-
-构建失败时可按组件续跑，例如：
-
-```bash
-M6_BUILD_COMPONENTS=metor \
-  deployment/scripts/build-amd64-images.sh release-20261016-1
-```
-
-镜像源和 Gradle 缓存预热方法见 [AMD64 隔离构建方案](amd64-build.md)。不要为解决下载失败而把含凭据的整个宿主缓存目录打进镜像。
-
-## 3. 组装可搬运部署包
-
-统一使用 `local-stack.py export` 生成部署包，不再手工复制脚本或拼装校验清单。解包后的根目录对应目标机 `/opt/icp-diag`：
-
-```text
-icp-diag-amd64-release-20261016-1/
-├── deployment/                 # Compose、mysql-init、migrations、脚本
-│   ├── config/embedding-models.example.json
-│   └── docs/                   # 运维说明
-├── images/full-stack.tar       # 含四个已核验 AMD64 镜像
-├── models/embedding/           # 完整 Embedding 配置、tokenizer、权重与模型 manifest
-├── manifest.json               # 镜像 ID／平台、源码基线、SDK／公开配置摘要及工具镜像引用
-└── SHA256SUMS
-```
-
-从工作区根目录执行，先将四个已核验归档导入独立制作环境的 Docker 镜像库。以下不是目标客户机的导入步骤：
-
-```bash
-docker load --input dist/m6-amd64-images-release-20261016-1/mysql_8.4_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261016-1/ai-runtime-service_release-20261016-1_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261016-1/metor-service_release-20261016-1_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261016-1/frontend_release-20261016-1_linux-amd64.tar
-
-docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
-  mysql:8.4 ai-runtime-service:release-20261016-1 \
-  metor-service:release-20261016-1 metor-platform-frontend:release-20261016-1
-```
-
-四个记录均应为 `linux/amd64`。在新路径创建**独立制作 env**，不使用或修改正在运行环境的私有配置；
-将上一步 AI 镜像的完整 `sha256:...` ID 填入 `LICENSE_TOOLS_IMAGE`，不能填 tag：
-
-```dotenv
-MYSQL_IMAGE=mysql:8.4
-AI_RUNTIME_IMAGE=ai-runtime-service:release-20261016-1
-METOR_IMAGE=metor-service:release-20261016-1
-FRONTEND_IMAGE=metor-platform-frontend:release-20261016-1
-METOR_PLATFORM=linux/amd64
-LICENSE_TOOLS_IMAGE=sha256:<AI镜像完整64个十六进制字符的ID>
-```
-
-保存为例如 `/absolute/build/amd64-export.env`，随后执行，输出目录必须尚不存在：
-
-```bash
-python3 deployment/scripts/local-stack.py --env-file /absolute/build/amd64-export.env \
-  export /absolute/dist/icp-diag-amd64-release-20261016-1.tar.gz
-# tar.gz 另附 .sha256，解压后再用包内 verify-bundle.sh 核验。
-# 完整命令见 customer-release/01-build.md。
-```
-
-导出从镜像库读取实际 ID／平台，强制四镜像同一受支持 Linux 平台，并检查两后端实际 SDK 0.7.1 载荷、正式摘要、客户模式及同一公开配置字节。
-`METOR_PLATFORM=linux/amd64` 本身不能把 ARM64 镜像变成 AMD64，因此必须保留上面的实际架构检查。
-导出会在固定 AI 镜像中运行断网许可探测和 Embedding 加载／编码检查，不启动数据库或 Chat 服务；制作环境必须能执行该目标架构。
-自动复制完整新工具集、Compose 与文档，生成 `images/full-stack.tar`、`manifest.json` 和 `SHA256SUMS`。
-当前 export 默认从工作区 runtime/config/docker.env 取得获准数据库密码／JWT 及完整模型路径；可用 --credentials-env／--model-path 指定。Embedding 在本次 AI 镜像内断网实际加载后随包输出，manifest.formatVersion 为 2。`manifest.licenseToolsImage` 引用包内 AI 不可变 ID，`manifest.licensing` 记录 SDK 版本、公开配置 SHA 和正式 SDK 制品摘要，目标机无须手选工具镜像。
-
-### 数量配置映射
-
-整栈 Compose 已透传 `METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES`，默认 20。目标环境修改私有 env 后重新创建 Metor；无需修改部署包中的 Compose，也不添加未被包装脚本读取的额外配置文件。
-
-manifest 自动记录源码提交及工作区变更列表、镜像 tag／ID／平台和构建日期。JNI 库、模型制品及目标环境验收结果另存受控发行记录，不填写私有凭据或客户事件内容。
-导出后不要修改包内文件；文档或脚本有修正时，应重新导出到新目录并核验，不手工补文件或重写 manifest 冒充原包。
-目标机配置属于解包后的部署定制，应另行备份。源 env 不整体复制；只将三项数据库密码／JWT 与完整 Embedding 纳入私有交付包。业务数据、备份及客户安装资料仍不进入包。
-
-## 4. 目标机统一目录
-
-校验 tar.gz 归档摘要后解压到 `/opt/icp-diag`，完整模型已在包内 models/embedding，无需另传。解压命令见[客户部署](customer-release/02-deploy.md)。目录如下：
-
-```text
-/opt/icp-diag/
-├── deployment/
-│   ├── config/embedding-models.example.json
-│   └── docs/
-├── images/
-├── models/embedding/             # 包内完整只读模型
-├── manifest.json
-├── SHA256SUMS
-└── runtime/
-    ├── config/
-    │   ├── docker.env
-    │   └── embedding/docker.json
-    ├── data/
-    │   ├── metor/              # 原始日志、报告和平台附件
-    │   └── ai/{documents,chroma}/
-    ├── logs/docker/{ai,metor}/
-    ├── work/{ai,metor}/
-    └── backups/
-```
-
-| 宿主路径 | 容器路径 | 属性 |
-|---|---|---|
-| `runtime/data/metor` | `/data/metor` | Metor 可写，升级保留 |
-| `runtime/data/ai/documents` | `/data/ai/documents` | AI 可写，升级保留 |
-| `runtime/data/ai/chroma` | `/data/ai/chroma` | AI 可写，禁止两套实例同时写入 |
-| `models/embedding` | `/models/embedding` | 只读，宿主路径不能填进模型清单的 `modelPath` |
-| `runtime/config/embedding/docker.json` | `/config/embedding-models.json` | 只读单文件挂载，启动前文件必须存在 |
-| `runtime/logs/docker/ai`、`metor` | `/logs/ai`、`/logs/metor` | 各服务可写 |
-| `runtime/work/ai`、`metor` | `/work/ai`、`/work/metor` | 临时工作目录，升级不替换挂载 |
-
-MySQL 保留 Compose 的 `mysql-data` 命名卷，当前项目名下通常为 `icp-diag-local_mysql-data`，以实际检查为准。不创建 `runtime/data/mysql`，不把旧数据库目录直接绑定到新环境。容器标准输出仍由 Docker 日志驱动管理，包括前端日志，不需要另建前端业务数据目录。
-
-## 5. 首次部署到全新 Linux 主机
-
-以下步骤只用于全新环境。已有部署不重新初始化凭据，不覆盖现有 `runtime` 或 MySQL 卷，更新见第 8 节。命令以能管理 `/opt/icp-diag` 且能访问 Docker 的运维账户执行；需要系统权限时使用 `sudo`。
-
-### 5.1 校验并导入镜像
-
-```bash
-cd /opt/icp-diag
-sh deployment/scripts/import-images.sh .
-```
-
-脚本先核验清单／manifest，再加载 `images/full-stack.tar`，最后核对实际镜像 ID 和平台。
-任一步失败都停止后续安装，不以手工 `docker load` 绕过。确认包内四镜像均为 `linux/amd64`；
-配置使用 `pull_policy: never`，缺少镜像时会失败，不会替你从公网下载。
-
-### 5.2～5.3 准备配置、目录与数值权限
-
-当前 format 2 完整包在目标 Linux root 会话执行一条命令：
-
-```bash
-cd /opt/icp-diag
-python3 deployment/scripts/prepare-runtime.py
-```
-
-脚本核对镜像、模型和包内摘要，自动填写本次四镜像引用、AMD64 平台、宿主路径及模型清单；数据库密码与 JWT 直接复用包内获准值，不再随机生成或手工替换 p6-local。创建数据、日志、工作与备份目录，检查镜像 UID/GID 并落实权限，模型直接只读挂载 /opt/icp-diag/models/embedding。原 env 及已有非空目录不被强行覆盖；需要更新的已有安装按更新规程操作。
-
-细节和失败处理见[首次部署](customer-release/02-deploy.md)。航空 AI 默认关闭，Chat／六场景准备并验证后再开启；实际 DAT 解密及原生 AMD64 业务验收仍是必需步骤。旧格式包和源码开发 init 不作为这次完整包安装入口。
-
-### 5.4 由 SDK 初始化授权资料
-
-本步骤只用于全新安装，且必须在镜像已导入、配置已准备、业务尚未启动时执行。停止任何本机 Metor／AI 进程及旧初始化任务，再运行：
-
-```bash
-sudo python3 deployment/scripts/local-stack.py --env-file /opt/icp-diag/runtime/config/docker.env \
-  license-init
-```
-
-包内工具自动使用 manifest 固定的新版 AI 镜像 ID，以 `--pull=never --network=none` 调用已安装 SDK，
-生成安装 UUID、32 字节安装主密钥和两个服务的初始 clock，并设置受审的 UID/GID／权限。
-操作者不手工制作 identity、key 或时间种子，宿主不安装 SDK，也不为初始化启动数据库或模型服务。
-首次返回 `INITIALIZED`，完整重复核对为 `ALREADY_INITIALIZED`；损坏完成资料不补造，错误现场需保留。
-已有客户安装跳过本步骤，按 [SDK 升级手册](license-sdk-upgrade.md) 保留原授权根，不重新初始化。
-
-## 6. 启动与访问
-
-先校验配置，不打印含密码的完整展开结果：
-
-```bash
-cd /opt/icp-diag
-python3 deployment/scripts/local-stack.py compose config --quiet
-
-python3 deployment/scripts/local-stack.py compose up -d --wait mysql
-python3 deployment/scripts/local-stack.py compose run --rm --no-deps ai-migrate
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait ai-runtime
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait metor
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait frontend
-python3 deployment/scripts/local-stack.py compose ps
-```
-
-逐条确认成功，失败时停止后续步骤。AI 的 Alembic 迁移必须显式运行，Metor 启动时执行 Flyway。已有 MySQL 卷不会重放初始化脚本，修改 env 密码也不会自动给已有数据库用户改密。
-
-首次启动后，平台管理员在“设置 → 软件授权”取得商业申请，交本产品 Issuer 签发，再在同页导入。
-没有商业许可时健康检查仍可正常，受控业务会被拒绝；健康检查通过不代表授权已生效。许可由 Metor 委托 SDK 共享发布，AI 本地只读验证。
-
-从旧环境迁入时，先采用[备份恢复流程](backup-restore.md)在空库及空文件目录恢复，不把上述空环境启动当作数据迁移。跨架构迁移使用逻辑 SQL 备份和文件备份，不复制正在运行的 MySQL 物理数据目录。恢复配置中的 ARM64 tag、制作机路径也必须换成目标值。
-
-前端默认允许局域网访问，其余服务的宿主入口绑定回环地址：
-
-| 服务 | 宿主端口 | 容器间地址 |
-|---|---|---|
-| 前端 | `0.0.0.0:18180`，浏览器使用宿主机 IP | `frontend:8080` |
-| Metor | `127.0.0.1:18080` | `metor:8080` |
-| AI | `127.0.0.1:18092` | `ai-runtime:8090` |
-| MySQL | `127.0.0.1:13306`，共享配置启用 | `mysql:3306` |
-
-```bash
-curl --fail http://127.0.0.1:18180/healthz
-curl --fail http://127.0.0.1:18080/actuator/health/readiness
-curl --fail http://127.0.0.1:18092/internal/health/ready
-```
-
-局域网浏览器可访问 `http://主机IP:18180`，并在主机防火墙／云安全组允许客户端来源访问。也可从操作电脑建立 SSH 隧道：
-
-```bash
-ssh -N -L 18180:127.0.0.1:18180 operator@linux-host
-```
-
-使用隧道时，浏览器访问操作电脑的 `http://127.0.0.1:18180`。需要域名／TLS 时配置受控反向代理，不直接开放 MySQL／AI 管理端口。前端绑定地址在 Compose 中为 `0.0.0.0`，发布端口由 `FRONTEND_EXPOSED_PORT` 配置。
-
-## 7. JNI 与业务验收
-
-Metor AMD64 镜像已包含 `/usr/local/lib/libEncryptAndDecrypt.so`，不需要宿主另挂 `.so`。该库为 Linux AMD64，不能用 ARM64 镜像完成相同验证。
+Metor AMD64 镜像内包含 `/usr/local/lib/libEncryptAndDecrypt.so`，无需从宿主另挂该库。服务按首次部署指南就绪后，可作以下只读检查：
 
 ```bash
 python3 deployment/scripts/local-stack.py compose exec -T metor sh -c \
   'test -r /usr/local/lib/libEncryptAndDecrypt.so && ldd /usr/local/lib/libEncryptAndDecrypt.so'
 ```
 
-动态依赖不能有 `not found`。这只证明文件及依赖可见，还需通过实际 DAT 调用验证 JVM 加载、JNI 符号和解密结果。
+依赖检查不能出现 not found；文件存在和 ldd 通过仍不能代替实际 JNI 调用。记录以下验收结果，客户样本和事件内容保存在私有资料目录：
 
-按顺序记录以下结果，客户样本和事件内容只存私有验收目录：
+1. Metor 的实际 DAT 解密开关已开启，没有 UnsatisfiedLinkError 等加载异常。
+2. 使用获准 DAT 样本验证真实解密、解析及事件入库；多根 DAT／ZIP 按交付范围核对来源、数量和顺序。
+3. 对照客户期望结果验证故障、巡检、报告、原始文件及下载导出；前端交互另按人工清单验收。
+4. 完成实际 Chat、场景和检索资源配置，验证真实模型可达与航空 AI 结果，不能用固定响应代替。
+5. 按相应操作指南完成停启、断网和隔离恢复验收，记录版本、镜像 ID、包摘要、迁移版本和数据对账。
 
-1. 检查 Metor 进程有效解密开关为开启，无 `UnsatisfiedLinkError` 等加载异常。
-2. 用获准 DAT 样本验证解密、拆分和事件入库，再用 DAT/ZIP 混合多根验证每根来源、组内数量与顺序。
-3. 分别验证故障与巡检、源复用、共享目录重建、数据库查询、DOCX 和全部原根导出。
-4. 配置平台中的真实模型服务、业务场景及绑定，验证容器可达的模型地址。容器内 `localhost` 不是宿主模型服务。
-5. 将 `METOR_AEROSPACE_AI_ENABLED` 改为 `true`，重新创建 Metor，再验证真实 AI 故障与巡检成功。健康检查或固定 AI 响应不替代此项。
-6. 做一次受控停启、断网运行和隔离备份恢复演练，记录镜像 ID、数据库迁移版本和数据对账结果。
-
-前端多选仍为独立交付事项，不把后端接口多文件测试记作多选 UI 已验收。
-
-## 8. 日常更新与单服务升级
-
-从 SDK 0.6.0 的既有 ICP 安装迁移到 0.7.1 时，先按 [SDK 升级手册](license-sdk-upgrade.md) 完成公开信任兼容核对、停写备份及隔离升级／回退验证。
-保留原 identity、主密钥、商业许可、两个 clock 和恢复挑战，不运行 `license-init`，不重签正常旧许可。
-回退业务镜像也保留**当前最新**授权状态，继续使用新版部署工具及固定工具镜像；源码部署不把 `LICENSE_TOOLS_IMAGE` 改回旧 AI，便携包工具 ID 由 manifest 固定。
-
-升级只更换目标镜像版本，保持私有配置、宿主数据目录、项目名和数据库卷。容器重建会保留挂载数据，但单实例更新会短暂停机，不是滚动零停机发布。
-
-维护前暂停新申报和摄取操作，等待正在执行的诊断及写入任务结束，再进行停写备份。当前 Metor 重启只重新发现 READY 任务，不自动恢复 RUNNING 任务；不要用直接重启中断任务，再未经核对将其重置为 READY。积压较多时先安排排空窗口，异常中断按步骤、报告和日志核查后处理。
-
-### 8.1 更新前备份
-
-在旧镜像 tag 和旧配置仍有效时先备份，每次使用尚不存在的新目录：
-
-```bash
-cd /opt/icp-diag
-python3 deployment/scripts/local-stack.py backup \
-  /opt/icp-diag/runtime/backups/before-release-20261017-1
-```
-
-备份会短暂停止前端、Metor、AI 写入，再恢复原运行状态，包含两个业务库、应用文件、Chroma 和私有配置，不包含模型权重和镜像。模型与旧镜像另行保留。备份含密码，不能进入通用交付包；还应复制到受保护的异机存储，统一目录内的副本不能防宿主磁盘故障。
-
-含迁移的维护窗口可用 `backup --keep-stopped <新目录>` 让写入服务保持停止，再按 AI、Metor、前端顺序恢复。共享模式备份会检查 8080／8090，避免本机开发进程继续写同一份数据。
-
-### 8.2 只更新前端
-
-校验更新包后导入新镜像，在 `runtime/config/docker.env` 中只改 `FRONTEND_IMAGE`：
-
-```bash
-docker load --input /absolute/path/frontend-new-amd64.tar
-python3 deployment/scripts/local-stack.py compose config --quiet
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait frontend
-```
-
-检查页面、登录和接口代理。若依赖新版 API，按兼容关系更新后端，不能只升级前端。
-
-### 8.3 只更新 Metor
-
-完成备份并保留旧配置后，导入新镜像，只改 `METOR_IMAGE`，再执行：
-
-```bash
-docker load --input /absolute/path/metor-new-amd64.tar
-python3 deployment/scripts/local-stack.py compose config --quiet
-python3 deployment/scripts/local-stack.py compose stop frontend metor
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait metor
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait frontend
-```
-
-检查 Flyway、readiness、JNI 和业务样本。此步骤不更换 AI／MySQL 镜像，不重建其容器；前述一致性备份仍会短暂停写。若使用了 `--keep-stopped`，需先恢复原版本 AI 服务并确认就绪，再启动 Metor。
-
-### 8.4 只更新 AI Runtime
-
-完成备份后，导入新镜像并修改 `AI_RUNTIME_IMAGE`。`ai-migrate` 与 `ai-runtime` 共用该变量：
-
-```bash
-docker load --input /absolute/path/ai-runtime-new-amd64.tar
-python3 deployment/scripts/local-stack.py compose config --quiet
-python3 deployment/scripts/local-stack.py compose stop frontend metor ai-runtime
-python3 deployment/scripts/local-stack.py compose run --rm --no-deps ai-migrate
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait ai-runtime
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait metor
-python3 deployment/scripts/local-stack.py compose up -d --no-deps --wait frontend
-```
-
-迁移失败时不继续恢复调用方。不要依赖上次已退出成功的旧迁移容器，也不要只换 AI 容器而漏跑迁移。验证真实检索、图谱、文档摄取和场景调用。
-
-MySQL 更新单独安排数据库升级与恢复演练，不混入普通应用更新。
-
-### 8.5 仅修改配置
-
-环境变量或挂载变更后重新创建对应服务，例如：
-
-```bash
-python3 deployment/scripts/local-stack.py compose \
-  up -d --no-deps --force-recreate --wait metor
-```
-
-`restart` 不重新读取 Compose 环境变量或挂载。AI 配置变更按暂停调用方、重建 AI、确认就绪、恢复 Metor 和前端的顺序执行。模型清单替换为新宿主文件后也要重新创建 AI，避免单文件旧挂载仍引用旧文件。
-
-Chat 模型 API Key、模型服务、场景提示词等通过平台配置，保存在数据库，不需要为了修改这些业务配置重建镜像。Embedding 权重、模型 ID 或归一化设置变化可能要求重建 Chroma，见 [Embedding 运维](../../ai-runtime-service/docs/operations/embedding-models.md)。
-
-## 9. 排查、回退与禁止事项
-
-```bash
-cd /opt/icp-diag
-python3 deployment/scripts/local-stack.py compose ps
-python3 deployment/scripts/local-stack.py compose logs --tail=200 metor
-python3 deployment/scripts/local-stack.py compose logs --tail=200 ai-migrate ai-runtime
-python3 deployment/scripts/local-stack.py compose exec -T mysql \
-  sh -c 'test -d /var/lib/mysql'
-```
-
-| 现象 | 先检查 |
-|---|---|
-| `python3` 不存在 | 安装宿主 Python，镜像中的 Python 不等于宿主 Python |
-| 无法识别 `!override` | 升级 Compose 插件到支持的版本 |
-| 文件写入失败 | 指定挂载目录的实际 UID/GID、只读设置、SELinux 标签 |
-| 页面无法远程访问 | 当前绑定回环地址，使用 SSH 隧道或正式反向代理 |
-| 容器找不到模型 | 宿主权重完整性、只读挂载、清单中的容器路径 |
-| JNI 加载失败 | 镜像架构、解密开关、库依赖、JNI 符号和实际调用日志 |
-| 修改 env 未生效 | Compose 是否透传变量，以及是否重新创建服务 |
-| AI 流程失败 | 航空 AI 开关、真实场景配置及容器到模型服务的网络 |
-
-纯代码且数据兼容的更新，可恢复旧镜像 tag 并按相同依赖顺序重新创建。执行过不兼容数据库、索引或文件格式迁移后，只回退镜像不足以恢复系统，应停止写入，在新隔离目标恢复备份并对账；保留升级后的新增业务数据。
-
-多文件版本降级前停止新增多根单据，让多根 READY 任务在支持它的版本处理完毕。旧程序不能接管这些任务，V20 的 TEXT 字段不缩回 VARCHAR(255)。派生文件可重建不代表原始根、元数据或业务库可以删除。
-
-日常操作不执行 `down -v`、`docker volume prune`，不重复 `init`，不覆盖现有私有 env，不整体替换 `runtime`，不同时启动两套实例写同一份 Chroma。不输出或公开分享完整 Compose 展开配置、私有备份和客户事件。
-
-## 10. 没有宿主 Python 时的 Compose 入口
-
-推荐提前安装 Python，以便使用包含一致性备份和恢复检查的包装脚本。若只需在私有 env、目录授权及备份均已准备好的主机启动或查看服务，可在 Bash 中定义相同拓扑的入口：
-
-```bash
-cd /opt/icp-diag
-stack() {
-  docker compose -p icp-diag-local \
-    --env-file /opt/icp-diag/runtime/config/docker.env \
-    -f /opt/icp-diag/deployment/compose.ai.yaml \
-    -f /opt/icp-diag/deployment/compose.metor.yaml \
-    -f /opt/icp-diag/deployment/compose.full-local.yaml \
-    -f /opt/icp-diag/deployment/compose.shared-runtime.yaml "$@"
-}
-
-stack config --quiet
-stack ps
-```
-
-本文 `python3 deployment/scripts/local-stack.py compose ...` 可替换为 `stack ...`，启动顺序和迁移门禁保持不变。但 `init`、`license-init`、`backup`、`restore-stack` 是 Python 包装脚本的能力，不是 Compose 子命令，不能写成 `stack backup`。
-没有 Python 时不能按本手册完成首次安装／授权初始化或受支持的备份核验；先准备宿主工具，不以直接 Compose 启动跳过这些步骤。
-
-## 参考
-
-- [部署入口](../README.md)
-- [AMD64 隔离构建](amd64-build.md)
-- [日常更新](updates.md)与[备份恢复](backup-restore.md)
-- Docker：[`!override` 版本要求](https://docs.docker.com/reference/compose-file/merge/)、[单服务更新](https://docs.docker.com/compose/how-tos/production/)、[`restart` 配置边界](https://docs.docker.com/reference/cli/docker/compose/restart/)
+架构、JNI 和客户验收记录随本次发行保存；不要把历史 ARM64 演示、旧镜像的健康检查或构建日志当作本次 AMD64 业务验收结论。

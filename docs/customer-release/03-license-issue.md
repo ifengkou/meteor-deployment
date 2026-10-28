@@ -1,6 +1,6 @@
 # 阶段三：我方授权签发
 
-执行方：我方签发人员。Issuer 0.4.0 留在我方运行，不部署到客户服务器。使用已经与客户镜像公开配置匹配的正式密钥；本次核查 key ID 为 `vendor-icp-2026`。不要使用 `deployment-20261025` 或旧 `manual-*` 演示身份，也不在发版时临时 keygen。
+执行方：我方签发人员。Issuer 0.4.0 留在我方运行，不部署到客户服务器。使用与客户镜像公开配置匹配的正式密钥，核对其中的 key ID 和公钥。
 
 ## 1. 客户取得商业申请
 
@@ -39,7 +39,7 @@
 
 ## 4. 可选 CLI：当前参数入口
 
-在已经安装的 Issuer 上先运行 `license-issuer sign-license --help`。当前产品／密钥／记录路径统一来自 TOML；不再接收旧 `--product`、`--key-id`、`--private-key`、`--records-dir` 参数。
+在已经安装的 Issuer 上先运行 `license-issuer sign-license --help`。产品、密钥和签发记录路径统一由 TOML 配置。
 
 下面示例的五个变量需先按合同填写并保存在我方受保护的本次签发记录中；`ISSUANCE_UUID` 为本次规范 UUID，同一次重试不重新生成。起止时间格式为 `YYYY-MM-DDTHH:MM:SSZ`，不得照抄过期示例日期：
 

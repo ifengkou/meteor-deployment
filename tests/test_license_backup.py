@@ -70,6 +70,25 @@ class LicenseBackupTests(unittest.TestCase):
         with patch.object(layout, "read_regular", side_effect=PermissionError("denied")):
             self.assertIsNone(licensing.host_fingerprint(self.config, self.base))
 
+    def test_root_owned_service_locks_fail_layout_preflight(self):
+        # A migration can preserve clocks while recreating their locks as root.
+        # Both runtimes then reject time state despite readable clock bytes.
+        for name in ("state/metor/clock.json.lock", "state/ai/clock.lock"):
+            with self.subTest(lock=name):
+                lock = self.root / name
+                lock.write_bytes(b"")
+                inode = lock.stat().st_ino
+
+                def check_existing_lock(info, expected):
+                    if info.st_ino == inode:
+                        self.check_metadata(SimpleNamespace(
+                            st_uid=0, st_gid=0, st_mode=0o100600), expected)
+
+                with patch.object(layout, "check_metadata", side_effect=check_existing_lock):
+                    with self.assertRaisesRegex(ValueError, "numeric owner"):
+                        layout.validate_layout(self.root)
+                lock.unlink()
+
     def test_compose_relative_paths_ignore_invocation_directory(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(licensing.license_root({}, self.base / "deployment"),
