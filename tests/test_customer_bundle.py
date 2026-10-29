@@ -60,9 +60,10 @@ def complete_fixture(root):
     return manifest
 
 
-def test_credentials_roundtrip_and_url_encoding(tmp_path):
+@pytest.mark.parametrize("architecture", ["amd64", "arm64"])
+def test_credentials_roundtrip_and_url_encoding(tmp_path, architecture):
     private = private_fixture(tmp_path / bundle.CREDENTIAL_PATH)
-    manifest = {"images": [{"reference": f"fixture:{i}", "architecture": "amd64"}
+    manifest = {"images": [{"reference": f"fixture:{i}", "architecture": architecture}
                            for i in range(4)]}
     values = bundle.runtime_config(tmp_path, manifest)
     assert {key: values[key] for key in private} == private
@@ -70,7 +71,9 @@ def test_credentials_roundtrip_and_url_encoding(tmp_path):
     assert "p6-local" not in str(values)
     target = tmp_path / "docker.env"
     bundle.write_env(target, values)
-    assert bundle.read_env(target) == values
+    restored = bundle.read_env(target)
+    assert restored == values
+    assert restored["METOR_AEROSPACE_AI_ENABLED"] == "true"
     assert target.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         bundle.write_env(target, values)

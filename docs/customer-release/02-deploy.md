@@ -47,7 +47,7 @@ python3 deployment/scripts/prepare-runtime.py
 - 从包内 `deployment/config/customer.env` 原样复用制作机 `runtime/config/docker.env` 中的 MYSQL_ROOT_PASSWORD、AI_DB_PASSWORD、METOR_DB_PASSWORD 和 JWT 密钥，生成 `runtime/config/docker.env`（0600）。AI_DB_URL 自动按实际密码进行 URL 编码。
 - 自动填写目标机运行目录、授权根与模型路径；Embedding 直接只读挂载包内 `/opt/icp-diag/models/embedding`，无需另传模型包或复制权重。
 - 创建业务数据、日志、工作和备份目录，设置指定目录数值 owner／mode；模型文件设为只读。不会递归改已有业务文件的 owner，不使用 chmod 777。
-- 创建容器路径为 `/models/embedding` 的模型清单。默认开启 AMD64 解密，航空 AI 保持关闭，待模型服务和六场景配置完成后开启。
+- 创建容器路径为 `/models/embedding` 的模型清单。航空业务 AI 在所有架构下默认开启；DAT 解密仅在 AMD64 默认开启。正式业务验收前完成模型服务和六场景配置。
 
 相同配置下可重复执行；已有不同配置、非空目录属主不符或路径含软链接时拒绝覆盖。配置之后如经人工调整，不再用准备脚本重置它，按更新流程维护。源 env 不会整体进入交付包，不包含制作机路径、旧镜像、客户安装身份或签发私钥。
 

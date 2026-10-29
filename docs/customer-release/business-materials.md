@@ -41,14 +41,14 @@ export 复制全部文件到交付包的 `models/embedding/`，用本次固定 A
 
 使用自定义 ID 时同步写入私有 env 的对应变量并重建 Metor。场景存在但指向禁用模型、空知识库或错误图谱也不能交付。当前没有承诺“一键导出／导入所有客户场景”；新装从已评审配置表逐项建立，获准迁移则按整栈备份恢复处理，不把演示数据库当通用初始化数据。
 
-六场景与模型就绪后设置 `METOR_AEROSPACE_AI_ENABLED=true`，执行：
+航空业务默认使用 AI Runtime，生成配置中的 `METOR_AEROSPACE_AI_ENABLED=true`。模型服务、提示词和绑定通过平台保存后生效；若调整 env 中的场景 ID 映射或 AI 调用参数，重新创建 Metor：
 
 ```bash
 python3 deployment/scripts/local-stack.py compose \
   up -d --no-deps --force-recreate --wait metor
 ```
 
-分别跑真实故障和巡检；关闭 AI 的解析成功不等于最终业务成功。
+模型与场景配置完成后，分别运行真实故障和巡检，确认场景调用及业务结果。
 
 ## 4. 规则、知识与业务文件
 

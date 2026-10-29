@@ -25,7 +25,39 @@
 | 巡检汇总 | inspection-summary |
 | 单据关键词 | ticket-keyword |
 
-通过平台创建获准的模型服务、提示词、检索参数、知识库／图谱及场景绑定，逐项用真实输入验证。自定义 ID 时同步修改私有 env 对应的 METOR_AEROSPACE_AI_SCENES_ 配置。完成后将 METOR_AEROSPACE_AI_ENABLED 改为 true，按[运维指南](operations.md)重新创建 Metor，并跑真实故障与巡检。
+通过平台创建获准的模型服务、提示词、检索参数、知识库／图谱及场景绑定，逐项用真实输入验证。自定义 ID 时同步修改私有 env 对应的 METOR_AEROSPACE_AI_SCENES_ 配置。
+
+## 航空业务 AI 配置
+
+航空诊断默认调用 AI Runtime，准备脚本生成的 METOR_AEROSPACE_AI_ENABLED=true。完成模型服务和场景配置后进行业务验收。该开关仅用于显式禁用航空业务的 AI 调用；平台模型服务和场景调试使用独立的平台 AI 代理。
+
+先按[运维命令入口](operations.md#命令入口)选定 ICP_STACK 和原 ICP_ENV，核对运行配置中的正常业务值：
+
+```dotenv
+METOR_AEROSPACE_AI_ENABLED=true
+```
+
+通过平台保存模型、提示词和场景绑定后可直接调用。只有修改了原 runtime/config/docker.env 中的业务开关、场景映射或调用参数，才需先备份配置，在维护窗口暂停新业务、等待任务结束后重建 Metor 和前端：
+
+```bash
+ICP_STACK=/opt/icp-diag/deployment/scripts/local-stack.py
+ICP_ENV=/opt/icp-diag/runtime/config/docker.env
+
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose stop frontend metor
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --force-recreate --wait metor
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --force-recreate --wait frontend
+```
+
+核对容器内实际变量：
+
+```bash
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T metor sh -c \
+  'env | grep -E "^(METOR_AEROSPACE_AI_ENABLED|METOR_PLATFORM_AI_RUNTIME_BASE_URL|METOR_AEROSPACE_AI_BASE_URL)="'
+```
+
+预期 METOR_AEROSPACE_AI_ENABLED=true，两个 BASE_URL 均为 http://ai-runtime:8090。前者地址用于平台 AI 代理，后者用于航空业务场景调用。容器间使用服务名和内部端口，端口映射的 18092 供宿主维护使用。
+
+完成后跑真实故障与巡检，确认 AI Runtime 收到相应场景请求并返回业务结果。
 
 ## 规则与业务资料
 

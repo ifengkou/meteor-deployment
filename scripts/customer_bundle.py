@@ -199,7 +199,7 @@ def runtime_config(bundle, manifest):
         "FRONTEND_EXPOSED_PORT": "18180",
         "METOR_AEROSPACE_DECRYPTION_ENABLED": "true"
             if manifest["images"][0]["architecture"] == "amd64" else "false",
-        "METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES": "20", "METOR_AEROSPACE_AI_ENABLED": "false",
+        "METOR_AEROSPACE_DECLARATION_MAX_LOG_FILES": "20", "METOR_AEROSPACE_AI_ENABLED": "true",
     })
     return values
 

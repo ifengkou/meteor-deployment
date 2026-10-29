@@ -16,9 +16,40 @@ Linux 客户使用 `python3 deployment/scripts/local-stack.py compose ...`，mac
 | 离线构建尝试联网 | 检查 wheelhouse 完整性和 `AI_OFFLINE_BUILD=1` | 在联网制品机重新生成 wheelhouse；不要在目标机临时下载 |
 | 出现 CUDA/NVIDIA 包 | 检查 `uv.lock`、wheelhouse 文件名和 `pip list` | 拒绝发布，重新生成 CPU-only 锁与 wheelhouse |
 | Chroma 损坏/丢失 | 确认 MySQL、原文档、模型 fingerprint 完整 | 恢复 Chroma 快照，或清空派生数据后运行重建脚本 |
-| metor 无法调用 AI | 容器内检查 `METOR_PLATFORM_AI_RUNTIME_BASE_URL` 和业务 `METOR_AEROSPACE_AI_BASE_URL` 是否为 `http://ai-runtime:8090` | 使用 Compose service name，不要使用 `127.0.0.1` |
+| Metor 报 AI服务未启用，AI 无对应场景请求 | 检查容器内 METOR_AEROSPACE_AI_ENABLED；此报错在发送 HTTP 前由业务客户端抛出 | 核对原 docker.env 为 true，重建 Metor 和前端，按[业务配置步骤](../customer-docs/business-config.md#航空业务-ai-配置)验收 |
+| metor 无法调用 AI | 按[配置与连通检查](#metor-访问-ai-的检查)核对业务开关、两个 BASE_URL、服务名解析与 AI readiness | 容器间使用 http://ai-runtime:8090，区分平台代理与航空业务调用 |
 | 前端 API 返回 502，但 metor healthy | 比较 frontend 日志中的 upstream IP 与容器内 `getent hosts metor`；旧前端镜像可能仍缓存后端重建前的 IP | 临时执行 `python3 deployment/scripts/local-stack.py compose exec frontend sh -c 'nginx -t && nginx -s reload'`；更新到支持 Docker DNS 动态解析的前端镜像后，IP 变化将自动恢复。`/healthz` 仅检查前端存活 |
 | 构建在 load metadata 阶段报 content descriptor/config not found | 检查构建目标平台、当前镜像源及被引用的 blob；索引 HTTP 200 不代表配置／证明文件完整 | 先补齐对应平台基础镜像；镜像源缺 blob 时修复源或从可用代理取得同一不可变摘要，再仅续跑失败组件。不要先清空所有构建缓存 |
+
+## Metor 访问 AI 的检查
+
+在客户主机 root 运维终端选择实际脚本和完整运行 env。首次安装默认路径如下，已有更新按当前完整发行包位置填写 ICP_STACK：
+
+```bash
+ICP_STACK=/opt/icp-diag/deployment/scripts/local-stack.py
+ICP_ENV=/opt/icp-diag/runtime/config/docker.env
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T metor sh -c \
+  'env | grep -E "^(METOR_AEROSPACE_AI_ENABLED|METOR_PLATFORM_AI_RUNTIME_BASE_URL|METOR_AEROSPACE_AI_BASE_URL)="'
+```
+
+| 变量 | 作用 | 航空 AI 启用时的预期值 |
+| --- | --- | --- |
+| METOR_AEROSPACE_AI_ENABLED | 航空业务场景调用开关 | true |
+| METOR_PLATFORM_AI_RUNTIME_BASE_URL | 页面 AI 管理、调试的平台代理地址 | http://ai-runtime:8090 |
+| METOR_AEROSPACE_AI_BASE_URL | 航空诊断服务的 AI 调用地址 | http://ai-runtime:8090 |
+
+平台调试和航空业务使用独立配置；航空业务的正常值为 true。若运行 env 显式填写 false，会覆盖 Compose 的 true 缺省值。调整配置后用 up --force-recreate 重建服务，restart 不重新载入变量；若变量已为 true 仍出现同一提示，再核对实际容器、启动参数和更高优先级配置。
+
+从 Metor 容器检查 DNS 和 HTTP 连通性：
+
+```bash
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T metor getent hosts ai-runtime
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose exec -T metor \
+  curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+  http://ai-runtime:8090/internal/health/ready
+```
+
+readiness 返回 200 只确认当前连接及 AI 基础依赖；最后以实际航空场景调用验收。前端 502 单独检查前端到 Metor 的连接；旧前端在后端地址变更后需重新解析上游，可在 Metor 重建后重建前端。
 
 ## 基础镜像元数据缺失时续跑
 
