@@ -80,6 +80,9 @@ python3 deployment/scripts/local-stack.py \
 
 Java／前端无网源码重建不在 `--offline` 支持范围。
 
+Metor 会自动准备按 ARM64／AMD64 分开的本地 JDK／JRE 缓存，切换架构无需反复覆盖公共 tag。
+预热、显式刷新基础镜像及代理缺 manifest 的处理见[基础镜像缓存](../metor-base-images.md)。
+
 ## 4. 核对产物，转入 deploy
 
 ```bash

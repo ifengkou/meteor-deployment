@@ -32,6 +32,10 @@ docker buildx rm m6-amd64-builder
 
 自定义 builder 名称使用 M6_BUILDER_NAME，后续组件、前端和缓存预热必须使用同一个 builder。
 
+归档脚本默认复用缓存，不强制 `--pull`；主动更新基础镜像时设置 `M6_PULL_BASE_IMAGES=1`。
+普通 local-stack.py 构建的 ARM64／AMD64 基础镜像 tag 与该 builder 缓存相互独立。
+Metor 的镜像源参数和代理缺 manifest 处理见[基础镜像缓存](metor-base-images.md)。
+
 ## 2. AI、Metor、MySQL 归档
 
 示例 tag 与构建指南的 AMD64 build.env 一致。完整制作执行：

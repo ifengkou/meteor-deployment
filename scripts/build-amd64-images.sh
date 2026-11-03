@@ -33,10 +33,16 @@ trap cleanup EXIT
 build_archive() {
   local component=$1 archive=$2 tag=$3 context=$4
   local license_args=(--build-arg "GRADLE_OFFLINE=${M6_GRADLE_OFFLINE:-0}" --build-arg "AI_OFFLINE_BUILD=${M6_AI_OFFLINE_BUILD:-0}")
+  local pull_args=(--pull=false)
+  if [ "${M6_PULL_BASE_IMAGES:-0}" = 1 ]; then pull_args=(--pull); fi
   case "$component" in
     ai|metor) license_args+=(--build-arg LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED --build-arg "LICENSE_PRODUCT_CONFIG=$product_config") ;;
   esac
-  docker buildx build --builder "$builder" --platform linux/amd64 --pull \
+  if [ "$component" = metor ]; then
+    [ -z "${METOR_JDK_IMAGE:-}" ] || license_args+=(--build-arg "METOR_JDK_IMAGE=$METOR_JDK_IMAGE")
+    [ -z "${METOR_JRE_IMAGE:-}" ] || license_args+=(--build-arg "METOR_JRE_IMAGE=$METOR_JRE_IMAGE")
+  fi
+  docker buildx build --builder "$builder" --platform linux/amd64 "${pull_args[@]}" \
     --progress=plain --provenance=false \
     --metadata-file "$output_dir/$component.build-metadata.json" \
     --output "type=docker,dest=$archive.partial" \

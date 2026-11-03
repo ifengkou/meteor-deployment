@@ -615,6 +615,12 @@ def build(args):
         directory, key = components[service]
         print(f"Building {service}: {config[key]} ({config['METOR_PLATFORM']})", flush=True)
         options = ["docker", "build", "--platform", config["METOR_PLATFORM"], "-t", config[key]]
+        if service == "metor":
+            import metor_base_images
+
+            for name, image in metor_base_images.prepare(config["METOR_PLATFORM"]).items():
+                options += ["--build-arg", f"{name}={metor_base_images.pinned_reference(image)}"]
+            options += ["--pull=false"]
         if service in ("ai", "metor"):
             options += ["--build-arg", "LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED",
                         "--build-arg", f"LICENSE_PRODUCT_CONFIG={product_config}"]

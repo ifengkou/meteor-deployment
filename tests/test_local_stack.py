@@ -371,6 +371,23 @@ class LocalStackTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 stack.validate_sql(sql, "metor_ai")
 
+    def test_metor_build_uses_platform_cache_and_preserves_release_inputs(self):
+        config = {"METOR_PLATFORM": "linux/amd64", "METOR_IMAGE": "metor:test"}
+        cached = {"METOR_JDK_IMAGE": "local:jdk-amd64", "METOR_JRE_IMAGE": "local:jre-amd64"}
+        with patch.object(stack, "read_env", return_value=config), \
+             patch("license_artifacts.verify_build_inputs"), \
+             patch("metor_base_images.prepare", return_value=cached) as prepare, \
+             patch("metor_base_images.pinned_reference", side_effect=lambda ref: ref + "@sha256:base"), \
+             patch.object(stack, "run") as run:
+            stack.build(argparse.Namespace(env_file=self.env, offline=False, service=["metor"]))
+            prepare.assert_called_once_with("linux/amd64")
+            command = run.call_args.args[0]
+            self.assertIn("--pull=false", command)
+            self.assertIn("METOR_JDK_IMAGE=local:jdk-amd64@sha256:base", command)
+            self.assertIn("METOR_JRE_IMAGE=local:jre-amd64@sha256:base", command)
+            self.assertIn("LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED", command)
+            self.assertEqual(command[-1], str(stack.WORKSPACE / "metor-service"))
+
     def test_offline_build_only_targets_ai(self):
         config = {"METOR_PLATFORM": "linux/arm64", "AI_RUNTIME_IMAGE": "ai:test"}
         with (
