@@ -60,6 +60,8 @@ python3 deployment/scripts/local-stack.py license-init
 
 ## 5. 迁移与启动
 
+先按[航空诊断文件配置](business-config.md#航空诊断文件配置)从本次镜像提取完整配置到宿主机 `/data/metor/ai631/conf`，再执行以下启动命令。
+
 ```bash
 python3 deployment/scripts/local-stack.py compose config --quiet
 python3 deployment/scripts/local-stack.py compose up -d --wait mysql

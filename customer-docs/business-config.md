@@ -167,3 +167,57 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose logs --tail=100 metor
 按范围准备知识库原文、图谱、DAT／ZIP／报告样本、期望结果、普通用户及系统 API Key／scope。以真实 DAT 完成 JNI 解密、解析和事件入库，再验证故障／巡检、报告及原始文件导出。JNI 文件存在与健康检查通过不能替代这些业务操作。
 
 客户凭据、模型 API Key、业务样本和备份通过约定的安全渠道保存与交接，不进入公共日志或截图。
+
+## 航空诊断文件配置
+
+宿主机 `/data/metor/ai631/conf` 只读挂载到 Metor 容器 `/opt/metor/ai631/conf`。
+可在原运行配置中通过 `METOR_RULES_CONFIG_HOST_PATH` 指定其他宿主机绝对路径；本机开发可使用工作区 `runtime/data/metor/ai631/conf` 的绝对路径。
+配置目录须包含镜像内的完整配置，不能只放准备替换的单个文件；空目录会遮盖镜像配置，导致启动失败。
+
+首次使用此挂载（全新安装或旧版本升级）时，在启动／重建 Metor 前，从本次发行镜像提取配置。
+先按[运维命令入口](operations.md#命令入口)设置 `ICP_STACK`、`ICP_ENV`。以下在 Linux root 会话执行：
+
+```bash
+# 从原运行配置读取本次 Metor 镜像和挂载目录，不加载其他环境变量。
+METOR_CONFIG_IMAGE=$(python3 - "$ICP_ENV" "$ICP_STACK" <<'PYCODE'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[2]).parent))
+from customer_bundle import read_env
+print(read_env(Path(sys.argv[1]))["METOR_IMAGE"])
+PYCODE
+)
+METOR_CONFIG_DIR=$(python3 - "$ICP_ENV" "$ICP_STACK" <<'PYCODE'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[2]).parent))
+from customer_bundle import read_env
+print(read_env(Path(sys.argv[1])).get("METOR_RULES_CONFIG_HOST_PATH", "/data/metor/ai631/conf"))
+PYCODE
+)
+# 仅在目标目录不存在时执行；已有现场配置应保留，不重新提取覆盖。
+(
+  set -eu
+  test ! -e "$METOR_CONFIG_DIR"
+  seed=$(docker create --pull=never "$METOR_CONFIG_IMAGE")
+  trap 'docker rm "$seed" >/dev/null' EXIT
+  mkdir -p "$METOR_CONFIG_DIR"
+  docker cp "$seed:/opt/metor/ai631/conf/." "$METOR_CONFIG_DIR/"
+  chmod 0755 "$METOR_CONFIG_DIR"
+  find "$METOR_CONFIG_DIR" -type f -exec chmod 0644 {} \;
+  test -s "$METOR_CONFIG_DIR/fault_scene.json"
+  test -s "$METOR_CONFIG_DIR/readArg.json"
+)
+```
+
+逐条确认成功后再继续部署。若提取中断，检查目录中的文件是否完整后再处理，不直接启动服务。
+首次增加或修改挂载路径，需要重建 Metor 容器：
+
+```bash
+python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --force-recreate --wait metor
+```
+
+日后替换配置时，在维护窗口暂停新诊断并等待任务结束，备份整个宿主机配置目录，替换获准的配置文件并检查 JSON 格式、文件可读权限。
+然后通过同一入口执行 `compose restart metor`，再检查 readiness 和日志中的配置加载记录，完成真实诊断验收。
+`fault_scene.json` 在启动时加载，替换文件后不会自动刷新。更新镜像时保留现场配置，并核对新旧配置格式兼容性。
+此目录位于独立宿主机挂载中，需单独纳入备份；现有 `/data/metor` 数据卷备份不自动包含它。
