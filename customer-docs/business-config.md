@@ -23,9 +23,12 @@
 | 报告查询 | report-query |
 | 巡检节点 | inspection-node |
 | 巡检汇总 | inspection-summary |
+| 巡检汇总复核 | inspection-summary-review |
 | 单据关键词 | ticket-keyword |
 
 通过平台创建获准的模型服务、提示词、检索参数、知识库／图谱及场景绑定，逐项用真实输入验证。自定义 ID 时同步修改私有 env 对应的 METOR_AEROSPACE_AI_SCENES_ 配置。
+
+巡检汇总复核默认关闭。启用时设置 `METOR_AEROSPACE_AI_INSPECTION_SUMMARY_REVIEW_ENABLED=true`，为复核场景绑定可用模型并重新创建 Metor 容器。已有巡检汇总场景的环境可在 AI 数据库执行 `deployment/migrations/ai-runtime/inspection-summary-review.sql`（随部署仓库提供），也可在平台手工建立该场景。执行 SQL 后，查询应返回一条复核场景记录。复核校验原始数据与候选总结，未通过的模块结论不写入报告。
 
 ## 航空业务 AI 配置
 

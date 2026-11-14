@@ -26,7 +26,7 @@ export 复制全部文件到交付包的 `models/embedding/`，用本次固定 A
 
 在平台“智能场景 → 模型服务”创建记录并测试真实响应。配置保存在 AI 数据库，不在 docker.env 中配置 Chat API Key，也不写入镜像。宿主模型服务可使用经实测可达的宿主名／地址；不要假设所有 Linux 安装都自动配置 `host.docker.internal`。
 
-## 3. 航空六场景与绑定
+## 3. 航空场景与绑定
 
 通过平台场景管理创建本客户获准的提示词、参数、模型服务和检索绑定，逐一运行真实输入。Metor 配置映射的默认值如下：
 
@@ -37,6 +37,7 @@ export 复制全部文件到交付包的 `models/embedding/`，用本次固定 A
 | REPORT_QUERY | report-query |
 | INSPECTION_NODE | inspection-node |
 | INSPECTION_SUMMARY | inspection-summary |
+| INSPECTION_SUMMARY_REVIEW | inspection-summary-review |
 | TICKET_KEYWORD | ticket-keyword |
 
 使用自定义 ID 时同步写入私有 env 的对应变量并重建 Metor。场景存在但指向禁用模型、空知识库或错误图谱也不能交付。当前没有承诺“一键导出／导入所有客户场景”；新装从已评审配置表逐项建立，获准迁移则按整栈备份恢复处理，不把演示数据库当通用初始化数据。
