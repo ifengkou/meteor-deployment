@@ -70,6 +70,8 @@ python3 deployment/scripts/local-stack.py \
   --env-file runtime/release/release-20261028-1-arm64/build.env build --service ai
 ```
 
+发行构建应使用已提交的源码。构建入口将各工程的镜像 tag 和当时的 Git HEAD 写入 OCI 标签。
+
 `--service` 可重复，例如 `build --service ai --service metor`。AI 镜像同时用于 `ai-runtime` 和一次性 `ai-migrate`。AI 离线制作先准备完整 ARM64 wheelhouse：
 
 ```bash

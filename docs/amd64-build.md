@@ -92,6 +92,8 @@ docker buildx build \
   --platform linux/amd64 \
   --progress=plain --provenance=false \
   --metadata-file "$ICP_AMD64_OUTPUT/frontend.build-metadata.json" \
+  --label "org.opencontainers.image.version=${ICP_AMD64_VERSION}" \
+  --label "org.opencontainers.image.revision=$(git -C frontend rev-parse HEAD)" \
   --tag "metor-platform-frontend:${ICP_AMD64_VERSION}" \
   --output "type=docker,dest=$ICP_AMD64_OUTPUT/frontend_${ICP_AMD64_VERSION}_linux-amd64.tar.partial" \
   frontend

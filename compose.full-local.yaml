@@ -42,6 +42,11 @@ services:
       JAVA_UPSTREAM: metor:8080
     ports:
       - 0.0.0.0:${FRONTEND_EXPOSED_PORT:-18180}:8080
+    volumes:
+      - type: bind
+        source: ${RELEASE_INFO_DIR:-../runtime/config/release-info}
+        target: /run/metor-release
+        read_only: true
     read_only: true
     tmpfs:
       - /tmp

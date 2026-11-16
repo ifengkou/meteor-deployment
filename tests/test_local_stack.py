@@ -388,6 +388,72 @@ class LocalStackTests(unittest.TestCase):
             self.assertIn("LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED", command)
             self.assertEqual(command[-1], str(stack.WORKSPACE / "metor-service"))
 
+    def test_release_info_uses_running_image_ids_and_preserves_independent_versions(self):
+        records = {}
+        for index, service in enumerate(stack.RELEASE_SERVICES, 1):
+            records[service] = {
+                "Config": {"Labels": {
+                    "org.opencontainers.image.version": f"release-{index}",
+                    "org.opencontainers.image.revision": str(index) * 40,
+                    "private": "not public",
+                }},
+            }
+
+        def inspect(command, **kwargs):
+            service = command[-1].rsplit(":", 1)[1]
+            if command[1] == "inspect":
+                return SimpleNamespace(stdout=f"image:{service}")
+            return SimpleNamespace(stdout=json.dumps([records[service]]))
+
+        directory = self.root / "release-info"
+        with patch.object(stack, "read_env", return_value={"RELEASE_INFO_DIR": str(directory)}), \
+             patch.object(stack, "compose", side_effect=lambda env, *args, **kwargs:
+                          SimpleNamespace(stdout=f"container:{args[-1]}")), \
+             patch.object(stack, "run", side_effect=inspect):
+            stack.refresh_release_info(self.env)
+
+        info = json.loads((directory / "release-info.json").read_text())
+        self.assertIsNone(info["releaseVersion"])
+        self.assertEqual(info["components"]["metor-service"], {
+            "version": "release-2", "revision": "2" * 40,
+        })
+        self.assertEqual(set(info["components"]), set(stack.RELEASE_SERVICES.values()))
+
+    def test_startup_succeeds_when_release_info_cannot_be_written(self):
+        target = self.root / "release-info" / "release-info.json"
+        target.mkdir(parents=True)
+
+        for command in (["compose", "up", "-d", "--wait", "frontend"], ["mode", "docker"]):
+            with self.subTest(command=command):
+                stderr = io.StringIO()
+                argv = ["local-stack.py", "--env-file", str(self.env), *command]
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch.object(sys, "stderr", stderr),
+                    patch.object(sys, "stdout", io.StringIO()),
+                    patch.object(stack, "ensure_native_services_stopped"),
+                    patch.object(stack, "read_env", return_value={"RELEASE_INFO_DIR": str(target.parent)}),
+                    patch.object(stack, "compose", return_value=SimpleNamespace(stdout="")) as compose,
+                ):
+                    self.assertEqual(stack.main(), 0)
+
+                self.assertEqual(compose.call_args_list[0].args[1:4], ("up", "-d", "--wait"))
+                self.assertIn("Warning: could not refresh release information", stderr.getvalue())
+                self.assertIn(str(target), stderr.getvalue())
+                self.assertEqual(list(target.parent.iterdir()), [target])
+
+    def test_failed_compose_up_does_not_refresh_release_info(self):
+        argv = ["local-stack.py", "--env-file", str(self.env), "compose", "up", "-d", "--wait"]
+        error = subprocess.CalledProcessError(1, ["docker", "compose", "up"])
+        with (
+            patch.object(sys, "argv", argv),
+            patch.object(sys, "stderr", io.StringIO()),
+            patch.object(stack, "compose", side_effect=error),
+            patch.object(stack, "refresh_release_info") as refresh,
+        ):
+            self.assertEqual(stack.main(), 1)
+        refresh.assert_not_called()
+
     def test_offline_build_only_targets_ai(self):
         config = {"METOR_PLATFORM": "linux/arm64", "AI_RUNTIME_IMAGE": "ai:test"}
         with (

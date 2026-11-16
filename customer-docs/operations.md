@@ -41,6 +41,8 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" backup /opt/icp-diag/runtime/backups/
 
 工具短暂停止写入服务，备份两业务库、业务文件、Chroma、私有配置和完整 SDK 授权状态，再恢复原运行服务。维护期间需要保持应用停止时使用 backup --keep-stopped；此模式下失败也保持停止，核对成功后再继续。
 
+已启用航空诊断文件挂载的环境，按[航空诊断文件配置](business-config.md#航空诊断文件配置)另行备份实际的宿主机配置目录，并与本次备份一并保留。
+
 备份不包含模型权重和镜像，另行保留发行包、原镜像和对应模型。备份包含密码与安装主密钥，存放于受保护的异机介质。
 
 ## 全套应用更新
@@ -59,24 +61,30 @@ mkdir "$ICP_BUNDLE"
 tar --no-same-owner -xzf "icp-diag-${ICP_RELEASE}.tar.gz" \
   --strip-components=1 -C "$ICP_BUNDLE"
 sh "$ICP_BUNDLE/deployment/scripts/import-images.sh" "$ICP_BUNDLE"
-ICP_STACK="$ICP_BUNDLE/deployment/scripts/local-stack.py"
-ICP_ENV=/opt/icp-diag/runtime/config/docker.env
 ```
 
-已有安装不运行 prepare-runtime.py，不用新包配置覆盖原运行 env。始终使用完整新包中的脚本、Compose 和 manifest，不单独复制某个脚本到旧包。原 env 中业务目录、模型、清单和 LICENSE_ROOT 保持原安装绝对路径。
+已有安装不运行 prepare-runtime.py，不用新包配置覆盖原运行 env。每个发行包中的脚本、Compose 和 manifest 配套使用，不单独复制某个脚本到其他包。原 env 中业务目录、模型、清单和 LICENSE_ROOT 保持原安装绝对路径。
 
 ### 2. 备份原运行版本
 
-确认新旧版本兼容，暂停入口并等待任务结束。运行 env 此时仍选择原镜像，执行：
+确认新旧版本兼容，暂停入口并等待任务结束。沿用当前部署的 `ICP_STACK` 和 `ICP_ENV`，此时 env 仍选择原镜像。使用尚不存在的备份目录，执行备份并校验：
 
 ```bash
+ICP_BACKUP="/opt/icp-diag/runtime/backups/before-${ICP_RELEASE}"
 python3 "$ICP_STACK" --env-file "$ICP_ENV" backup --keep-stopped \
-  "/opt/icp-diag/runtime/backups/before-${ICP_RELEASE}"
+  "$ICP_BACKUP" &&
+  (cd "$ICP_BACKUP" && sha256sum -c SHA256SUMS)
 ```
 
-确认备份成功后再切版本；备份目录每次使用新名称。保留旧包、旧镜像和对应模型。
+已启用航空诊断文件挂载时，同时完成上述宿主机配置目录备份。备份和校验成功后再切版本。保留旧包、旧镜像和对应模型。
 
-### 3. 在原 env 切换应用镜像
+### 3. 切换部署入口和应用镜像
+
+将 `ICP_STACK` 切换到目标发行包的脚本，`ICP_ENV` 仍指向原运行配置。
+
+```bash
+ICP_STACK="$ICP_BUNDLE/deployment/scripts/local-stack.py"
+```
 
 只修改原 runtime/config/docker.env 中的以下字段，值取自新包 manifest.json 的 images.reference：
 
@@ -87,6 +95,8 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" backup --keep-stopped \
 | FRONTEND_IMAGE | frontend |
 
 MYSQL_IMAGE 保持原版本，数据库升级另行安排。保留密码、JWT、端口、模型、业务路径和整个授权目录；不修改 Compose YAML 的兜底 tag，不用制作 build.env 覆盖运行配置。按文件配置操作时，确保 Shell 没有覆盖这些字段的同名 export 变量。
+
+目标版本要求迁移配置时，按该版本的升级说明完成迁移，再重建受影响的服务。
 
 ### 4. 迁移并重建
 
@@ -102,11 +112,13 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 
 逐条成功后再继续。ai-migrate 仅执行 AI 数据库 schema 迁移；Metor 启动时执行 Flyway。核对实际容器镜像、健康、原账号和业务数据，按[软件授权](license.md)确认授权，再验收真实业务和检索。
 
+打开前端的「系统信息」，核对三个应用的版本和 Git 提交 ID 与新包 `manifest.json` 中的 `version`、`revision` 一致。版本信息刷新告警单独处理，服务启动结果以 Compose 和健康检查为准。
+
 后续运维继续使用本次选定的 ICP_STACK 和原 ICP_ENV；将所用发行包路径与版本交接给运维人员。
 
 ## 单服务更新与配置变更
 
-先按全套更新第 1 步校验完整新包、导入镜像并选定新 ICP_STACK，保留原 ICP_ENV。完成普通 backup，使其他服务自动恢复，再只修改对应 *_IMAGE。下表命令均接在 `python3 "$ICP_STACK" --env-file "$ICP_ENV" compose` 后：
+先按全套更新第 1 步校验完整新包并导入镜像。沿用当前部署入口做普通 backup，原运行服务会自动恢复。按第 2 步校验备份并保存适用的宿主机配置，随后按第 3 步切换部署入口，只修改对应 *_IMAGE，并完成目标版本要求的配置迁移。下表命令均接在 `python3 "$ICP_STACK" --env-file "$ICP_ENV" compose` 后：
 
 | 服务 | 顺序 |
 | --- | --- |
@@ -129,6 +141,8 @@ restart 不读取新的镜像选择、环境或挂载。
 数据格式兼容时，在原 env 恢复已验收的镜像 tag，按依赖顺序重建，保留当前最新授权身份、许可、clock 和部署工具。
 
 数据格式不兼容时，停止写入并保留现场，由实施人员使用 restore-stack 在同宿主隔离空目标恢复，再做数据对账。目标需具备可读取的同一宿主 machine-id、独立数据路径及未占用端口；两个业务库、业务文件和授权目标为空，应用保持停止，且不先执行 license-init。恢复配置使用备份对应的数据库账号、密码和模型。
+
+恢复目标启用航空诊断文件挂载时，在目标 env 中设置独立的 `METOR_RULES_CONFIG_HOST_PATH`，并在执行 restore-stack 前恢复单独备份的配置。备份源尚未启用该挂载时，按目标版本的配置说明准备该目录。
 
 跨架构使用逻辑 SQL 和文件备份，不复制运行中的 MySQL 物理目录。过旧时间记录按[软件授权](license.md)处理，不使用旧 clock 覆盖运行状态。
 

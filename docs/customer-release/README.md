@@ -24,3 +24,5 @@
 ## 已有安装更新
 
 按 [deploy 第 7 节](02-deploy.md#7-已有环境更新)执行，保留完整授权资料和运行配置。SDK 版本变化按[兼容要求](../license-sdk-upgrade.md)核对，备份和恢复按[运维流程](../backup-restore.md)执行。
+
+[1103 → 1114 amd64 升级补充](20261114-upgrade.md)

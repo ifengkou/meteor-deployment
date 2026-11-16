@@ -585,6 +585,63 @@ def _restore_stack_data(args, backup):
     )
 
 
+RELEASE_SERVICES = {
+    "frontend": "frontend",
+    "metor": "metor-service",
+    "ai-runtime": "ai-runtime-service",
+}
+
+
+def image_release(record):
+    labels = record.get("Config", {}).get("Labels") or {}
+    version = labels.get("org.opencontainers.image.version", "")
+    revision = labels.get("org.opencontainers.image.revision", "")
+    return {
+        "version": version if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", version) else None,
+        "revision": revision if re.fullmatch(r"(?:[a-f0-9]{40}|[a-f0-9]{64})", revision) else None,
+    }
+
+
+def refresh_release_info(env_file):
+    """Publish the running image versions without changing the startup result."""
+    target = None
+    try:
+        config = read_env(env_file)
+        directory = Path(config.get("RELEASE_INFO_DIR") or RUNTIME_ROOT / "config/release-info")
+        target = directory / "release-info.json"
+        components = {}
+        for service, name in RELEASE_SERVICES.items():
+            container = compose(env_file, "ps", "-q", "--status", "running", service,
+                                capture_output=True, text=True).stdout.strip()
+            if not container:
+                continue
+            image = run(["docker", "inspect", "--format", "{{.Image}}", container],
+                        capture_output=True, text=True).stdout.strip()
+            record = json.loads(run(["docker", "image", "inspect", image],
+                                    capture_output=True, text=True).stdout)[0]
+            components[name] = image_release(record)
+        versions = {item["version"] for item in components.values()}
+        release_version = None
+        if len(components) == len(RELEASE_SERVICES) and len(versions) == 1:
+            release_version = versions.pop()
+        data = {"releaseVersion": release_version, "components": components}
+
+        directory.mkdir(parents=True, exist_ok=True)
+        output = tempfile.NamedTemporaryFile(mode="w", dir=directory, delete=False)
+        temporary = Path(output.name)
+        try:
+            with output:
+                json.dump(data, output, ensure_ascii=False, indent=2)
+                output.write("\n")
+            temporary.chmod(0o644)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        destination = f" at {target}" if target is not None else f" (configuration: {env_file})"
+        print(f"Warning: could not refresh release information{destination}: {error}", file=sys.stderr)
+
+
 def build(args):
     if WORKSPACE is None:
         raise ValueError(
@@ -615,6 +672,12 @@ def build(args):
         directory, key = components[service]
         print(f"Building {service}: {config[key]} ({config['METOR_PLATFORM']})", flush=True)
         options = ["docker", "build", "--platform", config["METOR_PLATFORM"], "-t", config[key]]
+        version = config[key].rsplit("/", 1)[-1].partition(":")[2]
+        revision = subprocess.check_output(
+            ["git", "-C", str(WORKSPACE / directory), "rev-parse", "HEAD"], text=True
+        ).strip()
+        options += ["--label", f"org.opencontainers.image.version={version}",
+                    "--label", f"org.opencontainers.image.revision={revision}"]
         if service == "metor":
             import metor_base_images
 
@@ -754,6 +817,7 @@ def export_directory(args):
                 "id": record["Id"],
                 "architecture": record["Architecture"],
                 "os": record["Os"],
+                **image_release(record),
             }
             for ref, record in zip(images, image_records)
         ],
@@ -849,6 +913,7 @@ def switch_mode(args):
     else:
         ensure_native_services_stopped()
         compose(args.env_file, "up", "-d", "--wait")
+        refresh_release_info(args.env_file)
         print("Docker mode ready: http://127.0.0.1:18180/")
 
 
@@ -936,6 +1001,8 @@ def main():
                     "not supported"
                 )
             compose(args.env_file, *forwarded)
+            if forwarded[0] == "up" and any(flag in forwarded for flag in ("-d", "--detach", "--wait")):
+                refresh_release_info(args.env_file)
         else:
             {
                 "mysql": mysql_cli,

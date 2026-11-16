@@ -11,7 +11,7 @@
 
 首次顺序：校验并解压 → 导入镜像 → 准备配置与目录 → 初始化授权资料 → 启动服务 → 取得申请并导入许可 → 配置业务资源 → 验收。
 
-目标宿主环境：Linux x86_64、Docker Engine 24.0.7、Python 3.8.10 或更高版本，以及 tar、gzip、sha256sum、curl。本包自带固定的 Compose v2.33.0，由部署脚本自动调用；系统 docker-compose 1.25.0 可以保留，无需升级 Docker、替换系统 Compose 或另装 Python 3.12。宿主无需 JDK、Node、Python 业务依赖或 SDK。已有环境按更新规程操作，使用新包工具配原运行配置，保留数据和授权资料。
+目标宿主环境：Linux x86_64、Docker Engine 24.0.7、Python 3.8.10 或更高版本，以及 tar、gzip、sha256sum、curl。本包自带固定的 Compose v2.33.0，由部署脚本自动调用；系统 docker-compose 1.25.0 可以保留，无需升级 Docker、替换系统 Compose 或另装 Python 3.12。宿主无需 JDK、Node、Python 业务依赖或 SDK。已有环境按[更新规程](operations.md#全套应用更新)使用当前部署入口备份，随后用新包工具和原运行配置完成更新。
 
 包内含部署凭据，按客户约定的受控渠道传输和保存，不公开分发。签发私钥、客户安装身份、业务数据库、业务文件和 Chat 模型服务不包含在包内。不要编辑 manifest 或重写校验清单来绕过校验错误。
 

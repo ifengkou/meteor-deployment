@@ -16,7 +16,9 @@ python3 deployment/scripts/local-stack.py backup /absolute/protected/new-backup-
 
 每次使用尚不存在的新目录。备份目录为 0700，文件为 0600，包含凭据及业务数据，不提交 Git 或通用镜像包。模型权重、镜像、日志和临时目录不在业务备份内，需要另行保留模型与旧镜像，并将备份复制到受保护的异机存储。
 
-更新维护窗口使用：
+已启用航空诊断文件挂载的环境，按[航空诊断文件配置](../customer-docs/business-config.md#航空诊断文件配置)单独备份实际宿主机配置目录，并与本次备份一起保存。
+
+常规更新维护窗口使用当前部署的脚本、Compose 和运行 env：
 
 ```bash
 python3 deployment/scripts/local-stack.py backup --keep-stopped /absolute/protected/before-release
@@ -31,6 +33,8 @@ python3 deployment/scripts/local-stack.py backup --keep-stopped /absolute/protec
 仅验证授权目录时，使用 [SDK 0.7.1 授权资料专项演练](license-backup-validation.md)：在独立 Linux 卷和断网容器内，由程序断言原安装身份、密钥、许可、两端时间记录及数值权限。无需启动业务栈或人工复签；arm64 不代替客户 AMD64 验收。以下步骤用于整栈数据库和文件恢复。
 
 不要覆盖现有运行库。使用独立项目、未占用端口、全新数据目录和数据库卷。先从备份准备独立的 0600 私有 env，核对旧镜像与模型身份，并修改 `WORKSPACE_RUNTIME_DIR` 指向新隔离根目录，不能继续使用原业务目录。所有模型清单及宿主路径也需核对。
+
+恢复目标启用航空诊断文件挂载时，在恢复 env 中将 `METOR_RULES_CONFIG_HOST_PATH` 指向独立目录，并在执行 restore-stack 前恢复单独备份的配置。备份源尚未启用该挂载时，按目标版本的配置说明准备该目录。
 
 ```bash
 python3 deployment/scripts/local-stack.py \
@@ -69,7 +73,7 @@ deployment/scripts/rebuild-chroma.sh --knowledge-base-id 12
 
 当前宿主脚本只负责文件和归档检查，停止写入后的协议完整性由固定新版 AI 镜像内 SDK validate_installation 以只读挂载核验，不创建 Runtime 或打开锁，不因商业缺失／过期拒绝完整安装。停机前 preflight 仅检查文件系统。restore 先把原字节和权限写入独立 staging，经同一 SDK check 核对 installationId 后才发布。licenseState 仍严格保持 archive、installationId、machineIdSha256 三字段。
 
-先导入新镜像，再运行新版备份工具。源码部署明确设置 LICENSE_TOOLS_IMAGE 为新 AI 镜像完整 ID；导出包使用 manifest 的 licenseToolsImage。即使回退 AI 业务镜像，这个工具 ID 和新版脚本仍保持不变。停止旧初始化任务和所有外部写入者是前提，不能依赖旧 flock 与 SDK record lock 互斥。完整步骤见 [SDK 升级与回退](license-sdk-upgrade.md)。
+授权 SDK 升级需要新版校验工具时，先导入新镜像，再按专项升级说明使用新版备份工具。源码部署明确设置 LICENSE_TOOLS_IMAGE 为新 AI 镜像完整 ID；导出包使用 manifest 的 licenseToolsImage。即使回退 AI 业务镜像，这个工具 ID 和新版脚本仍保持不变。停止旧初始化任务和所有外部写入者是前提，不能依赖旧 flock 与 SDK record lock 互斥。完整步骤见 [SDK 升级与回退](license-sdk-upgrade.md)。
 
 `LICENSE_ROOT` 与 `LICENSE_MACHINE_ID_PATH` 按 Compose 第一份配置所在的 `deployment/` 目录解析相对路径，支持字面的绝对/相对路径；不支持路径中再嵌套变量。进程环境中的同名变量与 Compose 一样优先。不要将备份输出放入授权目录。生产授权目录包含 root/21000、Metor 21001 和 AI 21002 的私有资料，执行整栈备份/恢复需具备 root 权限，使用原私有配置和对应 Docker 环境；脚本在停止服务或导入业务数据前预检权限。
 

@@ -113,33 +113,47 @@ Metor、AI 和 MySQL 保持本机维护端口，不为浏览器单独开放。�
 
 我方先按 [build](01-build.md)制作并验收新包。客户校验新 tar.gz 与 .sha256，在未占用的新版本目录解压，运行新包的 import-images.sh 导入镜像。保留旧包与旧镜像；**不运行 prepare-runtime.py**，不把新包的 customer.env 覆盖到原运行 env。
 
-例如新包根为 `/opt/icp-diag/releases/release-20261028-1-amd64`，实际运行配置仍为 `/opt/icp-diag/runtime/config/docker.env`。下面在 Linux root 的同一 Bash 会话中定义两个绝对路径；换版本时只换新工具路径：
+以下在 Linux root 的同一 Bash 会话中执行。示例假定当前部署入口在安装根目录，新包放在独立发行目录。已使用独立发行目录部署时，将 `ICP_STACK` 改为当前运行版本对应的脚本路径。
 
 ```bash
-ICP_STACK=/opt/icp-diag/releases/release-20261028-1-amd64/deployment/scripts/local-stack.py
+ICP_RELEASE=release-20261028-1-amd64
+ICP_BUNDLE="/opt/icp-diag/releases/${ICP_RELEASE}"
+ICP_STACK=/opt/icp-diag/deployment/scripts/local-stack.py
 ICP_ENV=/opt/icp-diag/runtime/config/docker.env
 python3 "$ICP_STACK" --env-file "$ICP_ENV" compose config --quiet
 python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 ```
 
-新脚本会自动调用同目录包内固定 Compose 和 manifest 中的 AI 工具镜像。不要复制新 deployment 单个文件到旧包、混用 manifest 与工具镜像；直接保留完整新包，并始终显式指定原 env。实际配置的 WORKSPACE_RUNTIME_DIR、LICENSE_ROOT、模型与清单路径须为原安装绝对路径。
+脚本自动使用所属发行包的固定 Compose 和 manifest 中的 AI 工具镜像。每个包的部署文件配套使用，并始终显式指定原 env。实际配置的 WORKSPACE_RUNTIME_DIR、LICENSE_ROOT、模型与清单路径须为原安装绝对路径。
 
 ### 7.2 备份后再改运行 tag
 
-暂停入口、等待任务完成，停止所有外部源码写入与旧初始化任务，使用新工具备份旧运行版本：
+暂停入口并等待任务完成，停止所有外部源码写入和旧初始化任务。用当前部署的脚本、Compose 和原 env 备份，校验通过后再切换版本：
 
 ```bash
+ICP_BACKUP="/opt/icp-diag/runtime/backups/before-${ICP_RELEASE}"
 python3 "$ICP_STACK" --env-file "$ICP_ENV" backup --keep-stopped \
-  /opt/icp-diag/runtime/backups/before-release-20261028-1
+  "$ICP_BACKUP" &&
+  (cd "$ICP_BACKUP" && sha256sum -c SHA256SUMS)
 ```
 
 备份目录必须不存在，成功后写入服务保持停止；失败停止升级。备份包含两库、文件、Chroma、私有配置与 SDK 状态；模型及旧镜像另行保留。备份 env 必须仍描述旧版本，已提前改 tag 时先用更新前配置核对恢复；不要把新 tag 误记成原运行版本。
+
+已启用航空诊断文件挂载时，按[航空诊断文件配置](../../customer-docs/business-config.md#航空诊断文件配置)另行备份宿主机配置目录，并与本次备份一并保留。
+
+备份和校验成功后，将 `ICP_STACK` 切换到目标发行包，`ICP_ENV` 仍指向原运行配置。
+
+```bash
+ICP_STACK="$ICP_BUNDLE/deployment/scripts/local-stack.py"
+```
 
 在**原完整 runtime/config/docker.env** 只修改相应 AI_RUNTIME_IMAGE／METOR_IMAGE／FRONTEND_IMAGE，值按新包 manifest.images 的 reference 填写。MYSQL_IMAGE 保持原版本，除非本次明确包含数据库升级。无需改 compose.ai.yaml、compose.metor.yaml、compose.full-local.yaml 的兜底 tag；不拿制作 build.env 覆盖运行配置。
 
 保留原密码、JWT、路径、端口和授权资料；不初始化、不删除 clock、不换身份。Shell 同名 *_IMAGE、METOR_PLATFORM、LICENSE_ROOT、LICENSE_TOOLS_IMAGE 变量可能覆盖直接 Compose／工具选择，文件配置方式下先清除这些残留 export。
 
 ### 7.3 迁移、重建和验收
+
+目标版本要求迁移配置时，按该版本的升级说明完成迁移，再重建受影响的服务。
 
 ```bash
 python3 "$ICP_STACK" --env-file "$ICP_ENV" compose config --quiet
@@ -153,7 +167,9 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 
 逐条成功再继续；核对实际容器镜像、健康、Metor／AI 各自 ACTIVE、原数据、真实检索与航空业务。restart 不加载新镜像、环境或挂载。验收后记录本次包摘要、镜像 ID、迁移版本与所用工具目录。
 
-单服务更新也先导入相应新镜像并备份，只修改对应 *_IMAGE：
+在前端「系统信息」核对三个应用的版本和 Git 提交 ID 与新包 `manifest.json` 一致。版本信息刷新告警单独处理，服务启动结果以 Compose 和健康检查为准。
+
+单服务更新也先导入相应新镜像，用当前部署入口完成备份并校验，再切换到目标部署入口，只修改对应 *_IMAGE：
 
 - 前端：普通 backup 自动恢复原服务后，只重建 frontend。
 - Metor：普通备份后停止 frontend、metor，改 tag，再依次重建 metor、frontend，AI 保持原可用版本。

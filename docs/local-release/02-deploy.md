@@ -87,6 +87,8 @@ python3 deployment/scripts/desktop-stack.py compose ps
 
 ai-migrate 执行 AI Alembic schema 迁移；Metor 启动时执行 Flyway。up 应用新镜像、环境和挂载，restart 仅重启现有容器。MySQL 使用原数据卷和凭据。
 
+通过包装器执行后台 `compose up` 后，会根据运行中的三个应用容器的镜像 ID 刷新 `runtime/config/release-info/release-info.json`。系统信息显示各镜像的发行 tag 和构建时的 Git 提交。单服务升级后，其他服务仍显示各自运行的版本。三个版本一致时显示整套发行版本。
+
 ## 5. 验收
 
 ```bash

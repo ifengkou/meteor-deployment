@@ -34,6 +34,11 @@ build_archive() {
   local component=$1 archive=$2 tag=$3 context=$4
   local license_args=(--build-arg "GRADLE_OFFLINE=${M6_GRADLE_OFFLINE:-0}" --build-arg "AI_OFFLINE_BUILD=${M6_AI_OFFLINE_BUILD:-0}")
   local pull_args=(--pull=false)
+  local release_labels=()
+  if [ "$component" != mysql ]; then
+    release_labels+=(--label "org.opencontainers.image.version=${tag##*:}"
+      --label "org.opencontainers.image.revision=$(git -C "$context" rev-parse HEAD)")
+  fi
   if [ "${M6_PULL_BASE_IMAGES:-0}" = 1 ]; then pull_args=(--pull); fi
   case "$component" in
     ai|metor) license_args+=(--build-arg LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED --build-arg "LICENSE_PRODUCT_CONFIG=$product_config") ;;
@@ -46,7 +51,7 @@ build_archive() {
     --progress=plain --provenance=false \
     --metadata-file "$output_dir/$component.build-metadata.json" \
     --output "type=docker,dest=$archive.partial" \
-    "${license_args[@]}" \
+    "${license_args[@]}" ${release_labels[@]+"${release_labels[@]}"} \
     --tag "$tag" "$context" 2>&1 | tee "$output_dir/$component.build.log"
   python3 "$script_dir/inspect-docker-archive.py" "$archive.partial"
   mv "$archive.partial" "$archive"
