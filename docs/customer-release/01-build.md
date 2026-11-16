@@ -1,20 +1,19 @@
-# 阶段一：构建与统一交付包
+# 阶段一：构建与导出客户制品
 
-执行方：我方制作人员。命令从包含四仓的 `icp_diag/` 根目录执行。制作与组包使用独立环境，避免覆盖日常镜像。制作方需 Docker／Buildx、Bash 和 Python 3.9+；客户宿主工具要求见[首次部署](02-deploy.md)。本文版本号是示例，每次制作使用唯一新版本。
+执行方为我方制作人员。命令从包含四仓的 `icp_diag/` 根目录执行。制作方需 Docker／Buildx、Bash 和 Python 3.9+。每次制作使用唯一新版本号，示例中的 tag 按本次 `build.env` 替换。
 
 ## 范围与配置
 
-本文只负责 **Linux AMD64 客户镜像及统一交付包**。Apple Silicon 本机 ARM64 更新使用 [本机 build](../local-release/01-build.md) → [本机 deploy](../local-release/02-deploy.md)，不按本文启动服务。
+本文的产物目标为 `linux/amd64`。按本次需要交付的文件选择流程。
 
-制作统一显式指定私有 build.env，参数放在 build／export 子命令之前；它只对本条命令有效，不合并或覆盖 runtime/config/docker.env。省略 --env-file 时脚本会读取后者，所以正式制作不省略。运行版本、目录、授权初始化及更新在 [客户 deploy](02-deploy.md) 维护。
-
-| 命令 | 产物 | 后续 |
+| 本次任务 | 制作步骤 | 交付文件 |
 | --- | --- | --- |
-| 原生 AMD64 local-stack.py build | 当前 Docker 镜像库；不生成 dist 文件 | 不需 load；核验后 export |
-| Apple Silicon 隔离 Buildx | dist/ 镜像 tar | 在独立组包环境 load 后 export |
-| local-stack.py export ...tar.gz | 四镜像、完整 Embedding、配置、五份客户指南、manifest 和校验清单 | 客户按 deploy 校验、导入、准备、初始化、启动 |
+| 只发布部分镜像，例如 Frontend 和 Metor | [第 1 节](#1-冻结源码及外部输入) → [第 3 节](#3-制作并导出部分服务镜像)，校验 tar 后结束 | 本次变更的镜像 tar 和 `SHA256SUMS` |
+| 制作完整客户包 | [第 1 节](#1-冻结源码及外部输入) → [第 2 节](#2-构建完整包所需镜像) → [第 4 节](#4-导出并核验完整客户包) | 包含四镜像的 `tar.gz` 和 `.sha256` |
 
-Compose YAML 的 tag 是 env 缺失时的兜底，发行不修改它们。正式镜像选择写入 build.env，目标运行版本写入客户完整 docker.env；两份文件各有用途。普通 build 从文件读镜像名；直接 Compose 还会接受 Shell 同名变量覆盖，制作前清除残留 export 的镜像／平台变量。
+`local-stack.py build` 将镜像写入当前 Docker context 的镜像库。`docker image save` 将本机镜像导出成 tar。专用 Buildx builder 可以直接输出 tar。客户主机上的操作见[客户部署](02-deploy.md)，Apple Silicon 本机 ARM64 制作见[本机 build](../local-release/01-build.md)。
+
+构建和组包统一使用私有 `build.env`。将 `--env-file` 放在 `build` 或 `export` 子命令之前。脚本按这份文件读取本次配置，省略时会读取 `runtime/config/docker.env`。
 
 ## 1. 冻结源码及外部输入
 
@@ -34,7 +33,7 @@ PY
 
 检查对应远端已包含这些提交。构建期间不切分支、不继续编辑源码；发布记录中的 SHA 要与最终 manifest 一致。导出器会记录脏工作区，**不会自动拒绝**脏发布。
 
-每次新检出或 CI 都需另外准备：
+新检出或 CI 按构建范围准备输入。仅制作前端时准备前端依赖和基础镜像。用普通 `build` 制作 AI 或 Metor 时，脚本会校验两端 SDK 制品和公开配置，因此要准备下表的两端输入。
 
 | 输入 | 位置／要求 |
 | --- | --- |
@@ -42,7 +41,6 @@ PY
 | 正式 Python core wheel | `ai-runtime-service/wheelhouse/metor_license_core-0.7.1-py3-none-any.whl`，匹配 uv.lock 摘要 |
 | Issuer 公开配置 | 两端 `license-build/license-product.json`，同一原字节文件；来源为本次正式 Issuer |
 | 完整业务构建依赖 | Gradle／前端依赖、基础镜像；AI 离线构建还需匹配目标 Linux 架构与 Python 3.12 的完整 wheelhouse |
-| AMD64 专用 Compose | 工作区 `sdk-download/docker-compose-linux-x86_64`，官方 v2.33.0；导出器校验固定 SHA256，复制至包内 `deployment/bin/docker-compose-v2`，随附许可证 |
 
 制作方按[Java 输入](../../../metor-service/license-build/README.md)、[AI 输入](../../../ai-runtime-service/license-build/README.md)准备后检查：
 
@@ -77,15 +75,15 @@ LICENSE_PRODUCT_CONFIG=license-build/customer-product.json \
 
 配置和授权模式在构建时进入镜像；修改运行 env 或重启不会替换它们。修改公开配置／SDK 后要重建受影响的两个后端镜像，发行和既有安装信任兼容仍按前面的输入检查执行。
 
-## 2. 选择目标架构并构建
+## 2. 构建完整包所需镜像
 
 ### 2.1 AMD64 构建入口
 
-客户目标固定 linux/amd64。原生 AMD64 制作机使用下节普通 build；Apple Silicon 使用[隔离 AMD64 构建](../amd64-build.md)，该脚本固定 AMD64，不读取 build.env。镜像平台以实际 inspect 为准，METOR_PLATFORM 不会转换已有镜像架构。
+客户目标固定为 `linux/amd64`。普通 build 按 `build.env` 的 `METOR_PLATFORM` 构建，制作机需支持目标平台。Apple Silicon 上如需用专用 builder 隔离镜像，按[隔离 AMD64 构建](../amd64-build.md)直接生成归档。该脚本固定为 AMD64，参数按隔离构建说明配置。已有镜像的平台以 `docker image inspect` 为准。
 
 本机 ARM64 制作和部署已移至 [local-release/](../local-release/README.md)。如果另有 ARM64 交付需求，应准备完整同架构四镜像并单独验收，不能替代本次 AMD64 客户发行。
 
-### 2.2 原生 AMD64：完整应用镜像
+### 2.2 普通 build：完整 AMD64 应用镜像
 
 保存为 `runtime/release/release-20261028-1-amd64/build.env`：
 
@@ -97,7 +95,7 @@ FRONTEND_IMAGE=metor-platform-frontend:release-20261028-1-amd64
 METOR_PLATFORM=linux/amd64
 ```
 
-制作期可联网，在原生 AMD64 制作机执行：
+制作期可联网，在支持 AMD64 构建的制作环境执行：
 
 ```bash
 chmod 600 runtime/release/release-20261028-1-amd64/build.env
@@ -114,7 +112,7 @@ FROM mysql:8.4
 DOCKERFILE
 ```
 
-该镜像仍使用 MySQL 8.4，只用独立 tag 区分本次归档。已有环境仅更新应用时保留原 MYSQL_IMAGE，不把 MySQL 重制或升级混入应用更新。
+该镜像仍使用 MySQL 8.4，独立 tag 用于标识本次归档。已有符合要求的 AMD64 基线时，也可在完整包的 `build.env` 中填入实际复用的 MySQL tag。
 
 Apple Silicon 制作 AMD64 时，使用[隔离构建说明](../amd64-build.md)生成四个归档，采用上面相同的 tag。该流程不会将 AMD64 基础镜像或归档加载到本机开发镜像库；完成后在独立组包环境继续第 4 节。
 
@@ -131,27 +129,28 @@ python3 deployment/scripts/local-stack.py \
 
 这只制作 AI 镜像。Java／前端的无网源码重建不由该 --offline 入口承诺；隔离 AMD64 构建的 Gradle 缓存预热见[构建细节](../amd64-build.md)。客户使用预制镜像无需源码构建，普通 IDE JAR 或默认 bootJar 不能交付。
 
-## 3. 只制作单个服务镜像
+## 3. 制作并导出部分服务镜像
 
-使用本节 AMD64 build.env，只把要重制的服务改为新 tag，其余项保留实际存在的 AMD64 基线镜像。原生 AMD64 命令任选所需项，不必全部执行：
+### 3.1 构建本次要发布的服务
+
+在 `build.env` 中填写本次要构建的镜像引用和 `METOR_PLATFORM=linux/amd64`。普通 `build` 只读取选中服务的镜像引用。例如同时发布 Frontend 和 Metor 时，准备 `runtime/release/release-20261116-1-amd64/build.env`：
+
+```dotenv
+METOR_PLATFORM=linux/amd64
+METOR_IMAGE=metor-service:release-20261116-1-amd64
+FRONTEND_IMAGE=metor-platform-frontend:release-20261116-1-amd64
+```
+
+构建这两个服务：
 
 ```bash
-# 仅前端
+BUILD_ENV=runtime/release/release-20261116-1-amd64/build.env
+chmod 600 "$BUILD_ENV"
 python3 deployment/scripts/local-stack.py \
-  --env-file runtime/release/release-20261028-1-amd64/build.env build --service frontend
-
-# 仅 Java 后端
-python3 deployment/scripts/local-stack.py \
-  --env-file runtime/release/release-20261028-1-amd64/build.env build --service metor
-
-# 仅 AI Runtime；其产物同时供运行服务与 ai-migrate 使用
-python3 deployment/scripts/local-stack.py \
-  --env-file runtime/release/release-20261028-1-amd64/build.env build --service ai
-
-# 同时制作两个后端
-python3 deployment/scripts/local-stack.py \
-  --env-file runtime/release/release-20261028-1-amd64/build.env build --service ai --service metor
+  --env-file "$BUILD_ENV" build --service frontend --service metor
 ```
+
+其他发布范围按下表调整 `--service`，可以重复传入。
 
 | 选择参数 | 镜像变量 | 使用该镜像的 Compose 服务 |
 | --- | --- | --- |
@@ -161,20 +160,48 @@ python3 deployment/scripts/local-stack.py \
 
 MySQL 不在 --service 可选项中；需单独制作时使用第 2.2 节的方法。Apple Silicon 制作单个 AMD64 镜像时，AI／Metor／MySQL 用[隔离构建说明](../amd64-build.md)中的 M6_BUILD_COMPONENTS，前端用该文档的独立 Buildx 命令；它们不会因修改 build.env 自动改变输出 tag，需与制作配置逐项对齐。
 
-SDK、公开配置或两端契约变化时，要制作全部受影响服务，不能把“单镜像构建成功”当作整栈兼容通过。单服务制作也不自动修改运行 env、停止／启动容器或执行迁移；部署操作统一按[客户 deploy 的已有环境更新](02-deploy.md#7-已有环境更新)执行。
+SDK、公开配置或两端契约变化时，制作全部受影响的服务，并按目标环境核对兼容性。
 
-## 4. 验证实际镜像并导出
+### 3.2 导出并校验本次镜像
 
-本节只组装本次 AMD64 客户包，四镜像不能混用架构。本机 ARM64 直接更新不执行 export，按[本机 deploy](../local-release/02-deploy.md)操作。
-
-原生构建的镜像已经在制作镜像库中。隔离 AMD64 构建得到的是四个 tar，需在**独立组包环境**的 Docker 镜像库加载后才能 export。以下是制作阶段的归档加载，不是客户安装步骤，也不在日常 ARM64 开发镜像库执行：
+下面以 Frontend 和 Metor 为例，其他发布范围替换为实际镜像引用。普通 `build` 完成后，在原 Docker context 中检查镜像，确认输出的每一行都是 `linux/amd64`。隔离 Buildx 已输出 tar 时，使用实际归档路径直接进行下方归档校验。
 
 ```bash
-docker load --input dist/m6-amd64-images-release-20261028-1-amd64/mysql_8.4_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261028-1-amd64/ai-runtime-service_release-20261028-1-amd64_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261028-1-amd64/metor-service_release-20261028-1-amd64_linux-amd64.tar
-docker load --input dist/m6-amd64-images-release-20261028-1-amd64/frontend_release-20261028-1-amd64_linux-amd64.tar
+RELEASE=release-20261116-1-amd64
+OUT="dist/$RELEASE"
+METOR="metor-service:$RELEASE"
+FRONTEND="metor-platform-frontend:$RELEASE"
+METOR_TAR="metor-service_${RELEASE}_linux-amd64.tar"
+FRONTEND_TAR="frontend_${RELEASE}_linux-amd64.tar"
+
+docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$METOR" "$FRONTEND"
 ```
+
+首次导出时执行以下命令。已有本次 tar，或用隔离 Buildx 直接生成了归档时，转到下面的归档校验，路径按实际产物填写。
+
+```bash
+mkdir -p "$OUT"
+docker image save --output "$OUT/$METOR_TAR" "$METOR"
+docker image save --output "$OUT/$FRONTEND_TAR" "$FRONTEND"
+```
+
+从工作区根目录运行归档检查，确认归档内的架构、tag 和层文件。随后对实际交付的 tar 生成校验清单。macOS 上没有 `sha256sum` 时，用 `shasum -a 256` 替换该命令。
+
+```bash
+python3 deployment/scripts/inspect-docker-archive.py "$OUT/$METOR_TAR"
+python3 deployment/scripts/inspect-docker-archive.py "$OUT/$FRONTEND_TAR"
+(cd "$OUT" && sha256sum "$METOR_TAR" "$FRONTEND_TAR" > SHA256SUMS)
+```
+
+交付本次的两个 tar 与 `SHA256SUMS`，制作到此结束。客户运维从[已有环境的镜像更新](02-deploy.md#74-用镜像归档更新已有环境)接续。
+
+## 4. 导出并核验完整客户包
+
+本节适用于明确需要交付四镜像、Embedding 和部署资产的版本。普通 `build` 结束后，在同一组包 context 直接检查镜像。隔离 Buildx 生成的 tar 按[隔离归档移交组包](../amd64-build.md#5-制作结果与移交组包)导入制作方的组包环境。
+
+准备工作区的 `sdk-download/docker-compose-linux-x86_64`（官方 v2.33.0）。导出器校验固定 SHA256，并随包复制为 `deployment/bin/docker-compose-v2`。
+
+把下例的四个镜像引用换成本次 `build.env` 中的实际值。只重制部分服务时，在 `build.env` 中写明其余服务复用的 AMD64 基线 tag。
 
 ```bash
 docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
@@ -182,7 +209,7 @@ docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
   metor-service:release-20261028-1-amd64 metor-platform-frontend:release-20261028-1-amd64
 ```
 
-四个实际平台必须一致。将 AI 完整 ID `sha256:<64位十六进制>` 添加到上面的私有 build.env：
+四个镜像都必须为 `linux/amd64`。将 `AI_RUNTIME_IMAGE` 对应的完整镜像 ID 添加到同一份私有 `build.env`。导出器用这个 ID 固定授权检查使用的 AI 镜像，并核对它与包内 AI 镜像一致。
 
 ```dotenv
 LICENSE_TOOLS_IMAGE=sha256:<本次AI镜像的完整ID>
@@ -229,6 +256,4 @@ print('正式公开配置及四仓基线核对通过')
 PY
 ```
 
-将同一包放到原生目标 Linux，按[首次部署](02-deploy.md)和[授权导入验收](04-license-import.md)完成验收，保存包 SHA、manifest 与验收结果。脚本或文档变化后重新冻结、导出、核验；不手工修改已核验包后沿用旧摘要。完整模型与获准凭据随包；Chat、场景及客户业务资料按[准备清单](business-materials.md)落实。
-
-客户包文档只导出 customer-docs/ 的五份使用指南，本目录供制作方实施使用。
+交付通过核验的 `tar.gz` 和 `.sha256`，留存包摘要及 manifest。脚本或随包文档变化后重新冻结、导出并核验。客户包的使用指南来自 `customer-docs/`，目标主机上的操作见[客户部署](02-deploy.md)。

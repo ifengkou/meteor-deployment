@@ -17,6 +17,21 @@ docker build -t metor-platform-frontend:<release> .
 
 `pnpm check` 执行 Tokens、类型、lint、格式、测试、生产构建、制品完整性和 Storybook 构建。Dockerfile 生成生产静态制品并以 Nginx 提供服务，容器不运行 Vite。
 
+### 依赖下载超时
+
+`@fontsource/noto-sans-sc` 的锁定包约 73 MB，下载超时发生在依赖安装阶段，尚未执行 Vite 编译。前端配置将单次请求超时设为 10 分钟、最多重试 5 次、并发降为 8；Docker 使用 BuildKit pnpm store 缓存，失败后再次构建可复用已完整下载的包，但未完成的大包仍需重新下载。保留现有构建缓存即可，不必清空 Docker 缓存或删除锁文件。
+
+默认使用 npm 官方源。若该源持续缓慢，可在工作区根目录为本次构建显式指定镜像源：
+
+```sh
+FRONTEND_NPM_REGISTRY=https://registry.npmmirror.com \
+python3 deployment/scripts/local-stack.py \
+  --env-file runtime/release/release-20261029-1-amd64/build.env \
+  build --service frontend
+```
+
+`FRONTEND_NPM_REGISTRY` 也可写入选定的 `build.env`；Shell 环境优先。该配置仅作用于 frontend 构建，映射为 Docker build arg `NPM_REGISTRY`，不改变运行配置。直接调用 Docker 时使用 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`。依赖版本及完整性仍按现有 `pnpm-lock.yaml` 校验。
+
 生产构建读取 `.env.production`，默认 `VITE_DATA_MODE=real`。所有 `VITE_*` 都进入浏览器包，禁止放置密码、Token 或模型密钥。修改后需重新构建前端镜像；容器环境变量无法修改已构建 JS。脚本、图标、字体和样式本地发布，不依赖 CDN。
 
 ## 配置生效方式
@@ -32,6 +47,22 @@ docker build -t metor-platform-frontend:<release> .
 推荐本地代理链为 `5173 → Metor 8080 → AI 8090`。当前本机的私有联调配置可能覆盖 AI 为 `18091`，不能作为共享默认值。直连 AI 只用于隔离本机联调。`.env.local` 是本机配置，不作为过期构件删除。
 
 Docker 中 `JAVA_UPSTREAM=metor:8080`，Metor 再通过 `METOR_PLATFORM_AI_RUNTIME_BASE_URL=http://ai-runtime:8090` 访问 AI。修改 Compose 环境变量后使用 `up -d` 重新创建受影响容器；`restart` 不读取新的环境变量。
+
+## 平台外观设置
+
+用平台管理员账号登录，从右上角齿轮菜单进入「平台外观」。设置平台名称，上传登录页 Logo、平台内 Logo、favicon 和登录背景图，选择布局并设置配色。保存后检查登录页、浏览器标签页和登录后的菜单布局。
+
+2026 年 10 月 27 日 AMD64 人工验收使用了以下配置，图片和截图收录在当次「外观设置和业务数据配置」验收包中。
+
+| 设置项 | 验收值 |
+| --- | --- |
+| 平台名称 | 外场巡检巡修平台 |
+| 登录页 Logo | `avic-login-logo.png` |
+| 平台内 Logo 和 favicon | `avic_logo.png` |
+| 登录背景图 | `backgroup.png` |
+| 布局 | 顶部加通栏侧边菜单 |
+| 主色、Header 背景色和菜单字体颜色 | `#0081CC` |
+| Header 文字与图标颜色 | `#FFFFFF` |
 
 ## 路由与认证
 

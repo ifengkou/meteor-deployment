@@ -684,6 +684,10 @@ def build(args):
             for name, image in metor_base_images.prepare(config["METOR_PLATFORM"]).items():
                 options += ["--build-arg", f"{name}={metor_base_images.pinned_reference(image)}"]
             options += ["--pull=false"]
+        if service == "frontend":
+            registry = os.environ.get("FRONTEND_NPM_REGISTRY") or config.get("FRONTEND_NPM_REGISTRY")
+            if registry:
+                options += ["--build-arg", f"NPM_REGISTRY={registry}"]
         if service in ("ai", "metor"):
             options += ["--build-arg", "LICENSE_RELEASE_MODE=CUSTOMER_REQUIRED",
                         "--build-arg", f"LICENSE_PRODUCT_CONFIG={product_config}"]
@@ -765,6 +769,8 @@ def export_directory(args):
         "# ICP Diag 客户部署包\n\n请从[客户使用指南](docs/README.md)开始，按顺序完成安装、授权和业务配置。\n"
     )
     shutil.copytree(DEPLOYMENT / "mysql-init", package_deployment / "mysql-init")
+    # The MySQL entrypoint runs this bind-mounted script as the mysql user.
+    (package_deployment / "mysql-init/20-metor-schema.sh").chmod(0o755)
     shutil.copytree(DEPLOYMENT / "migrations", package_deployment / "migrations",
                     ignore=shutil.ignore_patterns("*.md"))
     (package_deployment / "scripts").mkdir()

@@ -53,6 +53,8 @@ python3 deployment/scripts/local-stack.py compose \
 
 ## 4. 规则、知识与业务文件
 
+从客户旧库提取最新六类规则并首次导入空目标库时，按[客户业务配置指南的规则迁移流程](../../customer-docs/business-config.md#规则与业务资料)操作。
+
 | 资料 | 准备方式与完成条件 |
 | --- | --- |
 | 六类规则字典 | Metor Flyway 只建表；获准使用随包规则数据时，显式执行 migrations 下 SQL 并核对行数／刷新缓存 |

@@ -139,6 +139,16 @@ dist/m6-amd64-images-release-20261028-1-amd64/
 └── SHA256SUMS
 ```
 
-脚本生成的 SHA256SUMS 仅覆盖 AI、Metor、MySQL 三个归档；前端需单独完成检查。完整四镜像、模型、配置及文档的最终校验清单由[统一组包流程](customer-release/01-build.md#4-验证实际镜像并导出)生成，不手工拼客户交付包。
+脚本生成的 `SHA256SUMS` 覆盖 AI、Metor、MySQL 三个归档。前端归档按第 3 节检查。只发布部分镜像时，按[部分镜像校验](customer-release/01-build.md#32-导出并校验本次镜像)为实际交付的 tar 生成校验清单。
 
-构建日志、build-metadata.json 和 inspection.json 保留为制作方证据。将四个已核验 tar 移交独立组包环境，继续构建指南的第 4 节；本文不执行客户安装、数据库迁移、启动或更新。
+制作完整包时，在独立组包环境加载四个已核验的 tar。示例的文件名按本次归档替换。
+
+```bash
+OUT=dist/m6-amd64-images-release-20261028-1-amd64
+docker load --input "$OUT/mysql_8.4_linux-amd64.tar"
+docker load --input "$OUT/ai-runtime-service_release-20261028-1-amd64_linux-amd64.tar"
+docker load --input "$OUT/metor-service_release-20261028-1-amd64_linux-amd64.tar"
+docker load --input "$OUT/frontend_release-20261028-1-amd64_linux-amd64.tar"
+```
+
+在该组包环境继续[导出并核验完整客户包](customer-release/01-build.md#4-导出并核验完整客户包)。构建日志、`build-metadata.json` 和 `inspection.json` 留作制作记录。

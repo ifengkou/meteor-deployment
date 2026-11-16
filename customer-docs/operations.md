@@ -118,15 +118,61 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 
 ## 单服务更新与配置变更
 
-先按全套更新第 1 步校验完整新包并导入镜像。沿用当前部署入口做普通 backup，原运行服务会自动恢复。按第 2 步校验备份并保存适用的宿主机配置，随后按第 3 步切换部署入口，只修改对应 *_IMAGE，并完成目标版本要求的配置迁移。下表命令均接在 `python3 "$ICP_STACK" --env-file "$ICP_ENV" compose` 后：
+### 用镜像 tar 更新 Metor 和 Frontend
 
-| 服务 | 顺序 |
+适用于已部署的 Linux AMD64 环境，且本次交付物为服务镜像 tar 和 `SHA256SUMS`。从[命令入口](#命令入口)设置当前部署使用的 `ICP_STACK` 和 `ICP_ENV`。沿用现有部署脚本、Compose、AI Runtime、MySQL、模型及授权资料。以下版本号、文件名和路径按实际交付填写。每条命令成功后再继续。
+
+1. 在客户主机校验收到的文件、导入两个镜像，再确认实际架构为 `linux/amd64`。记录输出的镜像 ID，并保留旧镜像以备回退。
+
+   ```bash
+   RELEASE=release-20261116-1-amd64
+   cd /absolute/transfer
+   sha256sum -c SHA256SUMS
+   docker load --input "metor-service_${RELEASE}_linux-amd64.tar"
+   docker load --input "frontend_${RELEASE}_linux-amd64.tar"
+   docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
+     "metor-service:$RELEASE" "metor-platform-frontend:$RELEASE"
+   ```
+
+2. 暂停入口、等待在途任务完成并停止外部写入。用仍指向旧镜像的运行配置备份，使用尚不存在的备份目录。普通 `backup` 会短暂停止写入服务，随后恢复原运行服务。已启用航空诊断文件挂载时，按[一致性备份](#一致性备份)一并备份宿主机配置。
+
+   ```bash
+   ICP_BACKUP="/opt/icp-diag/runtime/backups/before-$RELEASE"
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" backup "$ICP_BACKUP"
+   (cd "$ICP_BACKUP" && sha256sum -c SHA256SUMS)
+   ```
+
+3. 备份验证通过后，记下旧 tag，在原有 `$ICP_ENV` 文件中修改以下两项。保留其余设置。
+
+   ```dotenv
+   METOR_IMAGE=metor-service:release-20261116-1-amd64
+   FRONTEND_IMAGE=metor-platform-frontend:release-20261116-1-amd64
+   ```
+
+4. 校验 Compose 配置，停止并依次重建 Metor 和 Frontend。Metor 在启动时执行 Flyway。对照第 1 步的镜像 ID 核对实际容器镜像，验证登录和业务操作后恢复入口。
+
+   ```bash
+   unset METOR_IMAGE FRONTEND_IMAGE
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose config --quiet
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose stop frontend metor
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --wait metor
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --wait frontend
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
+   ```
+
+### 只更新一个服务
+
+只收到一个服务的镜像 tar 时，按上面的步骤校验并导入该镜像、备份原环境并修改对应的镜像 tag。继续使用当前的 `ICP_STACK` 和 `ICP_ENV`。收到完整发行包时，按[全套应用更新](#全套应用更新)第 1–3 步校验、导入、备份和切换部署入口，只修改本次更新服务的 tag。随后按下表重建服务，Compose 命令均接在 `python3 "$ICP_STACK" --env-file "$ICP_ENV" compose` 后。
+
+| 服务 | 运行配置与重建顺序 |
 | --- | --- |
-| 前端 | 改 FRONTEND_IMAGE，执行 up -d --no-deps --wait frontend |
-| Metor | stop frontend metor，改 METOR_IMAGE，依次 up -d --no-deps --wait metor、frontend |
-| AI | stop frontend metor ai-runtime，改 AI_RUNTIME_IMAGE，按全套流程执行 ai-migrate → ai-runtime → metor → frontend |
+| Frontend | 普通备份后修改 `FRONTEND_IMAGE`，执行 `up -d --no-deps --wait frontend`。 |
+| Metor | 普通备份后修改 `METOR_IMAGE`，执行 `stop frontend metor`，再依次重建 `metor`、`frontend`。 |
+| AI Runtime | 备份时使用 `--keep-stopped`，修改 `AI_RUNTIME_IMAGE`，按全套更新第 4 步执行 `ai-migrate`，再依次恢复 `ai-runtime`、`metor`、`frontend`。 |
 
-若用了 --keep-stopped 停止全部应用，按全套顺序恢复它们。SDK、公开配置或两端契约变化时一起更新受影响服务。
+若用 `--keep-stopped` 停止了所有应用，按全套更新的启动顺序恢复服务。SDK、公开配置或两端契约变化时按对应升级说明更新受影响服务，并完成所需的配置迁移。
+
+### 修改环境变量或挂载
 
 环境变量或挂载变化需重建对应容器，例如：
 

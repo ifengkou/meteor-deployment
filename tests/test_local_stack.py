@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -169,8 +170,14 @@ class LocalStackTests(unittest.TestCase):
 
         compose_fixture = self.root / "compose-binary"
         compose_fixture.write_bytes(b"synthetic standalone Compose")
+        deployment = self.root / "deployment"
+        shutil.copytree(stack.DEPLOYMENT, deployment,
+                        ignore=shutil.ignore_patterns(".git", ".pytest_cache", "__pycache__"))
+        mysql_init = "mysql-init/20-metor-schema.sh"
+        (deployment / mysql_init).chmod(0o700)
         package_compose = stack.customer_bundle.package_compose
-        with patch.object(stack.customer_bundle, "COMPOSE_SHA256", stack.file_sha256(compose_fixture)), \
+        with patch.object(stack, "DEPLOYMENT", deployment), \
+                patch.object(stack.customer_bundle, "COMPOSE_SHA256", stack.file_sha256(compose_fixture)), \
                 patch.object(stack.customer_bundle, "package_compose",
                              side_effect=lambda source, destination: package_compose(compose_fixture, destination)), \
                 patch.object(stack, "read_env", return_value=config), \
@@ -187,6 +194,8 @@ class LocalStackTests(unittest.TestCase):
                           archive.extractfile("customer/deployment/config/customer.env").read())
             self.assertIn("customer/deployment/scripts/prepare-runtime.py", archive.getnames())
             self.assertIn("customer/deployment/scripts/ai631-rules.py", archive.getnames())
+            self.assertEqual(archive.getmember(f"customer/deployment/{mysql_init}").mode, 0o755)
+        self.assertEqual((target / "deployment" / mysql_init).stat().st_mode & 0o777, 0o755)
         self.assertEqual({p.name for p in (target / "deployment/docs").iterdir()},
                          set(stack.CUSTOMER_DOCUMENTS))
         self.assertFalse((target / "deployment/docs/customer-release/readiness.md").exists())

@@ -21,6 +21,20 @@ Linux 客户使用 `python3 deployment/scripts/local-stack.py compose ...`，mac
 | 前端 API 返回 502，但 metor healthy | 比较 frontend 日志中的 upstream IP 与容器内 `getent hosts metor`；旧前端镜像可能仍缓存后端重建前的 IP | 临时执行 `python3 deployment/scripts/local-stack.py compose exec frontend sh -c 'nginx -t && nginx -s reload'`；更新到支持 Docker DNS 动态解析的前端镜像后，IP 变化将自动恢复。`/healthz` 仅检查前端存活 |
 | 构建在 load metadata 阶段报 content descriptor/config not found | 检查构建目标平台、当前镜像源及被引用的 blob；索引 HTTP 200 不代表配置／证明文件完整 | 先补齐对应平台基础镜像；镜像源缺 blob 时修复源或从可用代理取得同一不可变摘要，再仅续跑失败组件。不要先清空所有构建缓存 |
 
+## 后端重启期间的 502／504
+
+当前前端模板使用 Docker DNS、10 秒缓存和动态 upstream；Metor 的 AI 网关及航空 AI 客户端使用 JVM 地址解析。单实例重启仍有不可用窗口，不能用动态 DNS 保证零失败：
+
+| 操作 | 可能受影响的请求 | 服务恢复后的行为 |
+| --- | --- | --- |
+| Metor 重启或重建 | 所有代理到 Metor 的 API，可能返回 Nginx 502／504 或请求超时 | 同 IP 重新连通后恢复；IP 改变时等待 Nginx DNS 更新，通常不需重启前端 |
+| AI Runtime 重启或重建 | AI 管理网关、调用 AI 的航空业务；网关连接失败返回 JSON `AI_GATEWAY_UNAVAILABLE`（502），超时返回 `AI_GATEWAY_TIMEOUT`（504） | 同 IP 重新连通后恢复；IP 改变时还需等待 JVM DNS 缓存到期，通常不需重启 Metor |
+| 仅 AI Runtime 不可用 | `/platform/settings/appearance` 等不依赖 AI 的平台 API | Metor 正常时继续可用，不应因此变为 Nginx 502 |
+
+2026-10-29 对本机 `release-20261028-1-arm64` 做了隔离验证：采用当前发行前端镜像，以及从运行 Metor BootJar 提取的实际 `AiRuntimeGatewayFilter`／`AiRuntimeClient` 和同一发行 JRE，AI 端使用合成响应，不挂载业务数据、不重启在用容器。两条 AI 调用链均通过同 IP 重启与变更 IP 后恢复；实测 JVM 正缓存 30 秒、负缓存 10 秒。AI 更换 IP 后约 28 秒恢复，Metor 更换 IP 后前端约 5 秒恢复，且调用方容器未重启。这些是隔离探针结果，不包含真实应用、模型和数据库的启动耗时，也不是恢复时限承诺。原始结果保存在工作区 `runtime/checks/backend-restart-20261029/result.json`。
+
+重启前停止新任务并等待在途任务结束；恢复时先确认 AI readiness，再确认 Metor readiness，最后核验实际 API。`depends_on: service_healthy` 控制 Compose 启动顺序，不会阻止运行中的代理向正在重启的依赖发送请求；前端 `/healthz` 也不检查后端。写请求超时后先核实结果，不自动重放。
+
 ## Metor 访问 AI 的检查
 
 在客户主机 root 运维终端选择实际脚本和完整运行 env。首次安装默认路径如下，已有更新按当前完整发行包位置填写 ICP_STACK：

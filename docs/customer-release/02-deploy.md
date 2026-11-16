@@ -2,9 +2,11 @@
 
 执行方：客户运维／我方实施。第 1—6 节只用于全新 Linux AMD64 安装；已有完整 SDK 安装直接看[第 7 节](#7-已有环境更新)，不重新 prepare／init／license-init。本机 Docker Desktop 更新另见[本机 deploy](../local-release/02-deploy.md)。
 
-本次客户已确认 Linux x86_64／AMD64，使用本次正式 AMD64 包，并在原生 Linux AMD64 上验收。
+在原生 Linux AMD64 上完成部署验收，保存本次制品摘要、完整包的 manifest（如有）和验收结果。
 
 ## 1. 主机和资料就绪
+
+全新 Ubuntu 20.04 AMD64 主机可按 [主机环境准备](00-host-setup-ubuntu-20.04-amd64.md) 安装 Docker 并核验版本。
 
 本次目标环境为 Docker Engine 24.0.7、Python 3.8.10，另需 tar、gzip、sha256sum、curl。AMD64 包固定携带 Compose v2.33.0，统一入口自动调用；系统 docker-compose 1.25.0 可保留，不另装 Python 3.12。命令需要 Docker 权限，安装根目录操作需要相应系统权限。
 
@@ -99,6 +101,8 @@ ssh -N -L 18180:127.0.0.1:18180 operator@customer-host
 
 浏览器访问 `http://127.0.0.1:18180`。全新空用户库的第一次有效登录会创建首管理员；由授权实施人员先在受控入口完成，使用客户约定的强口令，再开放业务入口。已有库使用原管理员，无默认客户密码。
 
+需要设置平台名称、标识、背景或布局时，按 [平台外观设置](../frontend.md#平台外观设置) 操作。
+
 需要客户域名／TLS 时配置反向代理，统一代理页面与 API，并验收上传限制、长任务超时、路径和登录行为。同宿主代理可转发到 `http://127.0.0.1:18180`，远端代理使用客户主机 IP，并落实对应防火墙来源规则。发布端口由 FRONTEND_EXPOSED_PORT 配置。
 
 Metor、AI 和 MySQL 保持本机维护端口，不为浏览器单独开放。入口方案、域名、证书续期负责人写入发行记录。
@@ -108,6 +112,8 @@ Metor、AI 和 MySQL 保持本机维护端口，不为浏览器单独开放。�
 ## 7. 已有环境更新
 
 仅适用于已有完整 SDK 安装的 Linux 客户。保留数据库卷、业务文件、模型配置、密码、JWT 和整个 LICENSE_ROOT；原许可仍符合本次产品信任时无需重签。本机更新按[本机 deploy](../local-release/02-deploy.md)执行。
+
+收到单独的服务镜像 tar 时，直接按[第 7.4 节](#74-用镜像归档更新已有环境)执行。收到包含部署资产的完整发行包时，按第 7.1–7.3 节执行。
 
 ### 7.1 新包单独解压，不覆盖原运行目录
 
@@ -169,12 +175,51 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 
 在前端「系统信息」核对三个应用的版本和 Git 提交 ID 与新包 `manifest.json` 一致。版本信息刷新告警单独处理，服务启动结果以 Compose 和健康检查为准。
 
-单服务更新也先导入相应新镜像，用当前部署入口完成备份并校验，再切换到目标部署入口，只修改对应 *_IMAGE：
-
-- 前端：普通 backup 自动恢复原服务后，只重建 frontend。
-- Metor：普通备份后停止 frontend、metor，改 tag，再依次重建 metor、frontend，AI 保持原可用版本。
-- AI：使用 --keep-stopped 备份，改 AI_RUNTIME_IMAGE，然后执行 ai-migrate → ai-runtime → metor → frontend。
-
-单服务重建均用 `compose up -d --no-deps --wait <service>`；如果用了 --keep-stopped 停止所有写入者，就按全套顺序恢复它们。SDK、公开信任或两端契约改变时一起更新受影响服务。只改运行配置／挂载时使用 `--force-recreate`，仍遵循依赖顺序。
-
 只回退兼容的业务镜像时保留当前最新授权资料、新工具及 manifest，按依赖顺序重建；已发生不兼容数据库／索引／文件迁移时，按[备份恢复](../backup-restore.md)在同宿主全新隔离目标恢复并对账。不能以旧 clock、重新初始化或 down -v 代替回退。
+
+### 7.4 用镜像归档更新已有环境
+
+适用于本次只交付服务镜像、现有部署资产仍适用的更新。以下以同时更新 Frontend 和 Metor 为例，继续使用当前部署入口和原运行 env。路径、tag 和归档文件名按实际交付填写。每条命令成功后再继续。
+
+1. 在客户主机校验收到的归档，导入镜像并确认架构为 `linux/amd64`。
+
+   ```bash
+   RELEASE=release-20261116-1-amd64
+   cd /absolute/transfer
+   sha256sum -c SHA256SUMS
+   docker load --input "metor-service_${RELEASE}_linux-amd64.tar"
+   docker load --input "frontend_${RELEASE}_linux-amd64.tar"
+   docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
+     "metor-service:$RELEASE" "metor-platform-frontend:$RELEASE"
+   ```
+
+2. 暂停入口，等在途任务结束，停止外部写入。用当前部署入口和旧 tag 完成备份，校验备份后再修改配置。备份目录必须为新目录。普通 `backup` 完成后会恢复原先运行的服务。
+
+   ```bash
+   ICP_STACK=/opt/icp-diag/deployment/scripts/local-stack.py
+   ICP_ENV=/opt/icp-diag/runtime/config/docker.env
+   ICP_BACKUP="/opt/icp-diag/runtime/backups/before-$RELEASE"
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" backup "$ICP_BACKUP"
+   (cd "$ICP_BACKUP" && sha256sum -c SHA256SUMS)
+   ```
+
+3. 编辑原有 `$ICP_ENV` 中的两个镜像 tag。保留 AI Runtime、MySQL、模型、密码、路径和授权资料。清除 Shell 中同名的镜像变量，确保 Compose 读取文件中的值。
+
+   ```dotenv
+   METOR_IMAGE=metor-service:release-20261116-1-amd64
+   FRONTEND_IMAGE=metor-platform-frontend:release-20261116-1-amd64
+   ```
+
+4. 校验 Compose 配置，停止旧 Frontend 和 Metor，依次启动新版 Metor 和 Frontend。Metor 启动时执行自身 Flyway 检查。业务验收通过后恢复入口，并记录本次归档摘要和实际镜像 ID。
+
+   ```bash
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose config --quiet
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose stop frontend metor
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --wait metor
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose up -d --no-deps --wait frontend
+   python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
+   ```
+
+仅更新 Frontend 时，只导入前端 tar、修改 `FRONTEND_IMAGE`、重建 `frontend`。仅更新 Metor 时，只导入 Metor tar、修改 `METOR_IMAGE`，仍按上述顺序停止并启动这两个服务。
+
+仅更新 AI Runtime 时，使用 `backup --keep-stopped`，修改 `AI_RUNTIME_IMAGE`，按第 7.3 节执行 `ai-migrate` 并依次恢复 `ai-runtime`、`metor`、`frontend`。SDK、公开信任或两端契约变化时，按对应升级说明一并更新受影响的服务与部署资产。只改运行配置或挂载时，用 `--force-recreate` 重建受影响服务。
