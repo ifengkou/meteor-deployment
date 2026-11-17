@@ -92,5 +92,5 @@ AI 在宿主运行时可用 `http://127.0.0.1:11434` 访问宿主 Ollama；在 D
 ## Metor 航空文件配置挂载
 
 `METOR_RULES_CONFIG_HOST_PATH` 指定宿主机配置目录，缺省 `/data/metor/ai631/conf`，在基础与共享目录 Compose 中均只读挂载到 `/opt/metor/ai631/conf`。
-目录须预先准备，不自动创建空目录。首次提取、现场替换及重启步骤见[客户业务配置](../customer-docs/business-config.md#航空诊断文件配置)。
-本机 Docker Desktop 可将该变量设为工作区 `runtime/data/metor/ai631/conf` 的绝对路径，并先从镜像提取完整配置。
+Compose 会自动创建缺失的目录。Metor 优先读取现场同名 JSON，各文件缺失时使用应用资源中的默认值。现场替换及重启步骤见[客户业务配置](../customer-docs/business-config.md#航空诊断文件配置)。
+本机 Docker Desktop 可将该变量设为工作区 `runtime/data/metor/ai631/conf` 的绝对路径。

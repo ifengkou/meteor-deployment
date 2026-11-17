@@ -34,7 +34,7 @@ python3 deployment/scripts/local-stack.py backup --keep-stopped /absolute/protec
 
 不要覆盖现有运行库。使用独立项目、未占用端口、全新数据目录和数据库卷。先从备份准备独立的 0600 私有 env，核对旧镜像与模型身份，并修改 `WORKSPACE_RUNTIME_DIR` 指向新隔离根目录，不能继续使用原业务目录。所有模型清单及宿主路径也需核对。
 
-恢复目标启用航空诊断文件挂载时，在恢复 env 中将 `METOR_RULES_CONFIG_HOST_PATH` 指向独立目录，并在执行 restore-stack 前恢复单独备份的配置。备份源尚未启用该挂载时，按目标版本的配置说明准备该目录。
+恢复目标启用航空诊断文件挂载时，在恢复 env 中将 `METOR_RULES_CONFIG_HOST_PATH` 指向独立目录，并在执行 restore-stack 前恢复单独备份的配置。备份源没有现场覆盖文件时，Metor 在启动时使用内置默认配置。
 
 ```bash
 python3 deployment/scripts/local-stack.py \

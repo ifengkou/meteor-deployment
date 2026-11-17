@@ -60,7 +60,7 @@ python3 deployment/scripts/local-stack.py license-init
 
 ## 5. 迁移与启动
 
-先按[航空诊断文件配置](business-config.md#航空诊断文件配置)从本次镜像提取完整配置到宿主机 `/data/metor/ai631/conf`，再执行以下启动命令。
+首次启动时，Compose 自动准备宿主机航空诊断配置目录。Metor 使用内置默认 JSON；有现场定制时，按[航空诊断文件配置](business-config.md#航空诊断文件配置)放入需要覆盖的文件。
 
 ```bash
 python3 deployment/scripts/local-stack.py compose config --quiet

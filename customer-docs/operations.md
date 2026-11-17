@@ -120,7 +120,7 @@ python3 "$ICP_STACK" --env-file "$ICP_ENV" compose ps
 
 ### 用镜像 tar 更新 Metor 和 Frontend
 
-适用于已部署的 Linux AMD64 环境，且本次交付物为服务镜像 tar 和 `SHA256SUMS`。从[命令入口](#命令入口)设置当前部署使用的 `ICP_STACK` 和 `ICP_ENV`。沿用现有部署脚本、Compose、AI Runtime、MySQL、模型及授权资料。以下版本号、文件名和路径按实际交付填写。每条命令成功后再继续。
+适用于已部署的 Linux AMD64 环境，且本次交付物为服务镜像 tar 和 `SHA256SUMS`。 当前 Compose 需支持自动创建航空诊断配置目录。仍使用旧版 Compose 且目录不存在时，先按发行说明升级部署资产。从[命令入口](#命令入口)设置当前部署使用的 `ICP_STACK` 和 `ICP_ENV`。沿用现有部署脚本、Compose、AI Runtime、MySQL、模型及授权资料。以下版本号、文件名和路径按实际交付填写。每条命令成功后再继续。
 
 1. 在客户主机校验收到的文件、导入两个镜像，再确认实际架构为 `linux/amd64`。记录输出的镜像 ID，并保留旧镜像以备回退。
 
@@ -188,7 +188,7 @@ restart 不读取新的镜像选择、环境或挂载。
 
 数据格式不兼容时，停止写入并保留现场，由实施人员使用 restore-stack 在同宿主隔离空目标恢复，再做数据对账。目标需具备可读取的同一宿主 machine-id、独立数据路径及未占用端口；两个业务库、业务文件和授权目标为空，应用保持停止，且不先执行 license-init。恢复配置使用备份对应的数据库账号、密码和模型。
 
-恢复目标启用航空诊断文件挂载时，在目标 env 中设置独立的 `METOR_RULES_CONFIG_HOST_PATH`，并在执行 restore-stack 前恢复单独备份的配置。备份源尚未启用该挂载时，按目标版本的配置说明准备该目录。
+恢复目标启用航空诊断文件挂载时，在目标 env 中设置独立的 `METOR_RULES_CONFIG_HOST_PATH`，并在执行 restore-stack 前恢复单独备份的配置。备份源没有现场覆盖文件时，Metor 在启动时使用内置默认配置。
 
 跨架构使用逻辑 SQL 和文件备份，不复制运行中的 MySQL 物理目录。过旧时间记录按[软件授权](license.md)处理，不使用旧 clock 覆盖运行状态。
 

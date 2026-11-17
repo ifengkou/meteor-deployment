@@ -67,7 +67,7 @@ services:
         source: ${METOR_RULES_CONFIG_HOST_PATH:-/data/metor/ai631/conf}
         target: /opt/metor/ai631/conf
         read_only: true
-        bind: {create_host_path: false}
+        bind: {create_host_path: true}
       - type: bind
         source: ${LICENSE_ROOT:-../runtime/license}/identity
         target: /run/icp-license/identity
