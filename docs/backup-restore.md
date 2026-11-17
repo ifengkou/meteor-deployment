@@ -65,7 +65,7 @@ deployment/scripts/rebuild-chroma.sh
 deployment/scripts/rebuild-chroma.sh --knowledge-base-id 12
 ```
 
-执行前备份并暂停业务写入，重建后检查任务和真实检索。模型 ID、权重或归一化变化的规则见 AI 工程的[Embedding 运维](../../ai-runtime-service/docs/operations/embedding-models.md)。历史独立 backup／restore 脚本已归档，不用于当前栈。
+执行前备份并暂停业务写入，重建后检查任务和真实检索。模型 ID、权重或归一化变化的规则见 AI 工程的[Embedding 运维](../../ai-runtime-service/docs/operations/embedding-models.md)。
 
 ## 授权资料随整栈备份保留
 

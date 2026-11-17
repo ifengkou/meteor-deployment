@@ -777,7 +777,7 @@ def export_directory(args):
     shutil.copy2(Path(__file__), package_deployment / "scripts/local-stack.py")
     shutil.copy2(DEPLOYMENT / "scripts/license_init.py",
                  package_deployment / "scripts/license_init.py")
-    for name in ("license_backup.py", "license_files.py", "license_container.py", "license_artifacts.py", "customer_bundle.py", "prepare-runtime.py", "ai631-rules.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
+    for name in ("license_backup.py", "license_files.py", "license_container.py", "license_artifacts.py", "customer_bundle.py", "prepare-runtime.py", "import-images.sh", "verify-bundle.sh", "install-model.sh", "rebuild-chroma.sh"):
         shutil.copy2(DEPLOYMENT / "scripts" / name, package_deployment / "scripts" / name)
     catalog_path = package_deployment / "config/embedding-models.example.json"
     catalog_path.parent.mkdir(parents=True)

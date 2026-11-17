@@ -507,7 +507,7 @@ SDK 管理的商业许可、clock、挑战，以及 Issuer 管理的签发记录
 | Metor 拦截、清单与导入 | [LicenseRequestFilter](../../metor-service/platform-core/src/main/java/io/metor/platform/license/LicenseRequestFilter.java)、[LicenseHttpProperties](../../metor-service/platform-core/src/main/java/io/metor/platform/license/LicenseHttpProperties.java)、[LicenseManagementService](../../metor-service/platform-core/src/main/java/io/metor/platform/license/LicenseManagementService.java) |
 | AI 装配、请求拦截与维护 API | [licensing](../../ai-runtime-service/app/licensing.py)、[license_gate](../../ai-runtime-service/app/license_gate.py)、[internal/license](../../ai-runtime-service/app/api/internal/license.py) |
 | SDK 新产品接入与升级 | [接入说明](../../license-sdk/docs/integration-cn.md) |
-| 我方 CLI / Web 使用 | [issuer 中文说明](../../license-issuer/README_cn.md)；[旧版本实操记录](license-issuer-hands-on.md)仅供历史对照 |
+| 我方 CLI / Web 使用 | [issuer 中文说明](../../license-issuer/README_cn.md) |
 | 当前产品制作、安装和升级 | [SDK 升级手册](license-sdk-upgrade.md)、[Metor 构建输入](../../metor-service/license-build/README.md)、[AI 构建输入](../../ai-runtime-service/license-build/README.md) |
 | 客户时间恢复 | [恢复操作手册](license-recovery.md) |
 | 授权资料备份 | [备份恢复](backup-restore.md)、[隔离备份验证](license-backup-validation.md) |

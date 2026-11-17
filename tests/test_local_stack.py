@@ -193,7 +193,7 @@ class LocalStackTests(unittest.TestCase):
             self.assertIn(config["MYSQL_ROOT_PASSWORD"].encode(),
                           archive.extractfile("customer/deployment/config/customer.env").read())
             self.assertIn("customer/deployment/scripts/prepare-runtime.py", archive.getnames())
-            self.assertIn("customer/deployment/scripts/ai631-rules.py", archive.getnames())
+            self.assertNotIn("customer/deployment/scripts/ai631-rules.py", archive.getnames())
             self.assertEqual(archive.getmember(f"customer/deployment/{mysql_init}").mode, 0o755)
         self.assertEqual((target / "deployment" / mysql_init).stat().st_mode & 0o777, 0o755)
         self.assertEqual({p.name for p in (target / "deployment/docs").iterdir()},

@@ -14,9 +14,9 @@
 | Metor 数据库、JWT、AI 网关及业务配置 | `metor-service/.env.local`，模板 `.env.local.example`；Spring `local` profile 使用 | 同一 `runtime/config/docker.env` + `deployment/compose.metor.yaml`、`compose.full-local.yaml` |
 | 统一部署拓扑 | 开发进程独立启动 | `deployment/compose.ai.yaml` + `compose.metor.yaml` + `compose.full-local.yaml`，由 `local-stack.py` 统一选择 |
 | 数据与文件 | 按各私有配置指定的宿主目录和 MySQL 连接 | MySQL 保留命名卷；Metor 文件、AI documents/Chroma 由共享目录配置挂载到宿主 runtime |
-| 备份 | `ai-runtime-service/runtime/backups/` 或另行指定的私有目录 | `runtime/knowledge-graph-p6/full-stack-backup/` 为交付时备份；日常备份指定新的受保护目录 |
+| 备份 | 工作区 `runtime/backups/` 或另行指定的私有目录 | 每次备份指定独立的受保护目录 |
 
-模型权重位于 `ai-runtime-service/models/`，不打入应用镜像，也不提交 Git。Docker 中的
+工作区模型权重位于 `runtime/models/embedding/`，不打入应用镜像，也不提交 Git。Docker 中的
 `modelPath` 填容器内路径；宿主挂载源由 `AI_EMBEDDING_MODEL_HOST_PATH` 指定。
 当前完整栈启用 BGE，容器路径为 `/models/embedding`；多模型须同时配置清单和对应挂载。
 
@@ -49,7 +49,6 @@ Metor `.env.local` 保留为共享源码配置的链接。旧阶段配置和独�
 | AI Runtime | `127.0.0.1:18092` | `ai-runtime:8090` |
 | MySQL | `127.0.0.1:13306` | `mysql:3306`；业务库 `metor_service`、AI 库 `metor_ai`，各用独立账号 |
 
-原独立/开发环境的 3307、13307、18090 不再作为当前 local 默认依赖。旧环境未删除。
 
 浏览器管理请求的链路为前端 → Metor JWT 认证授权 → AI Runtime。18092 用于本机运维和
 健康检查；不要将直连 AI 管理接口当作对外平台认证入口。

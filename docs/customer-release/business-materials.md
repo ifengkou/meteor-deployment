@@ -53,8 +53,6 @@ python3 deployment/scripts/local-stack.py compose \
 
 ## 4. 规则、知识与业务文件
 
-从客户旧库提取最新六类规则并首次导入空目标库时，按[客户业务配置指南的规则迁移流程](../../customer-docs/business-config.md#规则与业务资料)操作。
-
 | 资料 | 准备方式与完成条件 |
 | --- | --- |
 | 六类规则字典 | Metor Flyway 只建表；获准使用随包规则数据时，显式执行 migrations 下 SQL 并核对行数／刷新缓存 |
@@ -62,7 +60,6 @@ python3 deployment/scripts/local-stack.py compose \
 | 知识库原文 | 获取客户授权原文，创建知识库并选择正确 embeddingModelId，上传／摄取成功后检索验证 |
 | 知识图谱 | 按场景需要准备节点、关系和原资料，导入／构建后核对范围与引用；不从演示环境复制无关资料 |
 | 真实验收样本 | 获准 DAT／ZIP、多根及报告样本，记录期望结果；包含解密、事件入库、故障／巡检和导出对账 |
-| 既有业务迁移 | 明确是否迁移、迁移范围、停写窗口、备份与对账；使用逻辑 SQL 和文件备份，不能跨架构拷正在运行的 MySQL 数据目录 |
 
 规则 SQL 随统一包在 `deployment/migrations/metor/ai631-rules-upsert.sql`。Metor 首次启动建表后可使用容器内 MySQL 客户端，不需客户另装客户端；先获业务批准，再执行：
 
